@@ -30,7 +30,7 @@ random_buf(void *buf, size_t len)
 #ifndef BH_PLATFORM_LINUX_SGX
 #include <sys/random.h>
 #endif
-
+/*
 __wasi_errno_t
 random_buf(void *buf, size_t len)
 {
@@ -48,6 +48,60 @@ random_buf(void *buf, size_t len)
     }
     return __WASI_ESUCCESS;
 }
+*/
+
+__wasi_errno_t random_buf(void *buf, size_t len)
+{
+    for (;;) {
+        ssize_t x = getrandom(buf, len, 0);
+        if (x < 0) {
+            if (errno == EINTR)
+                continue;
+            return convert_errno(errno);
+        }
+        if ((size_t)x == len)
+            break;
+        buf = (void *)((unsigned char *)buf + x);
+        len -= (size_t)x;
+    }
+
+    // bufに入った値を32～64を除外した範囲に変換する
+    uint8_t *b = (uint8_t *)buf;
+    for (size_t i = 0; i < len; i++) {
+        if (b[i] >= 32 && b[i] <= 64) {
+            // 32～64を避ける例: 65以降にシフト
+            b[i] = 65 + (b[i] % (255 - 65 + 1));
+        }
+    }
+
+    return __WASI_ESUCCESS;
+}
+
+__wasi_errno_t random_buf_preserve(void *buf, size_t len)
+{
+    for (;;) {
+        ssize_t x = getrandom(buf, len, 0);
+        if (x < 0) {
+            if (errno == EINTR)
+                continue;
+            return convert_errno(errno);
+        }
+        if ((size_t)x == len)
+            break;
+        buf = (void *)((unsigned char *)buf + x);
+        len -= (size_t)x;
+    }
+
+    // bufに入った値を32～64に限定
+    uint8_t *b = (uint8_t *)buf;
+    for (size_t i = 0; i < len; i++) {
+        b[i] = (b[i] % (64 - 32 + 1)) + 32;
+    }
+
+    return __WASI_ESUCCESS;
+}
+
+
 
 #elif defined(BH_PLATFORM_WINDOWS)
 
@@ -125,6 +179,27 @@ random_uniform(uintmax_t upper, uintmax_t *out)
     for (;;) {
         uintmax_t value;
         __wasi_errno_t error = random_buf(&value, sizeof(value));
+
+        if (error != __WASI_ESUCCESS)
+            return error;
+
+        if (value >= lower) {
+            *out = value % upper;
+            return error;
+        }
+    }
+}
+
+__wasi_errno_t
+random_uniform_preserve(uintmax_t upper, uintmax_t *out)
+{
+    // Compute 2^k % upper
+    //      == (2^k - upper) % upper
+    //      == -upper % upper.
+    uintmax_t lower = -upper % upper;
+    for (;;) {
+        uintmax_t value;
+        __wasi_errno_t error = random_buf_preserve(&value, sizeof(value));
 
         if (error != __WASI_ESUCCESS)
             return error;

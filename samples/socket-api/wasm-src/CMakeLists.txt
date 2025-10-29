@@ -49,16 +49,18 @@ function(COMPILE_WITH_CLANG SOURCE_FILE)
   add_executable(${MAIN_TARGET_NAME} ${SOURCE_FILE})
   set_target_properties(${MAIN_TARGET_NAME} PROPERTIES OUTPUT_NAME ${WASM_MODULE})
   target_include_directories(${MAIN_TARGET_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/inc)
-  target_compile_options(${MAIN_TARGET_NAME} INTERFACE -pthread)
+  target_compile_options(${MAIN_TARGET_NAME} PRIVATE --target=wasm32-wasi-threads -pthread)
   target_link_libraries(${MAIN_TARGET_NAME} socket_wasi_ext)
   target_link_options(${MAIN_TARGET_NAME} PRIVATE
     LINKER:--export=__heap_base
     LINKER:--export=__data_end
     LINKER:--export=malloc
     LINKER:--export=free
-    LINKER:--shared-memory,--max-memory=10485760
+    #LINKER:--shared-memory
+    LINKER:--max-memory=10485760
     LINKER:--no-check-features
     LINKER:--allow-undefined
+    LINKER:--export-all
   )
 
   if(EXISTS ${WASM_OBJDUMP})
@@ -79,13 +81,13 @@ function(COMPILE_WITH_CLANG SOURCE_FILE)
 endfunction()
 
 compile_with_clang(tcp_server.c)
-compile_with_clang(tcp_client.c)
-compile_with_clang(send_recv.c)
-compile_with_clang(addr_resolve.c)
-compile_with_clang(socket_opts.c)
-compile_with_clang(udp_client.c)
-compile_with_clang(udp_server.c)
-compile_with_clang(multicast_client.c)
-compile_with_clang(multicast_server.c)
-compile_with_clang(timeout_client.c)
-compile_with_clang(timeout_server.c)
+#compile_with_clang(tcp_client.c)
+#compile_with_clang(send_recv.c)
+#compile_with_clang(addr_resolve.c)
+#compile_with_clang(socket_opts.c)
+#compile_with_clang(udp_client.c)
+#compile_with_clang(udp_server.c)
+#compile_with_clang(multicast_client.c)
+#compile_with_clang(multicast_server.c)
+#compile_with_clang(timeout_client.c)
+#compile_with_clang(timeout_server.c)

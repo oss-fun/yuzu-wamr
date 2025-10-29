@@ -1,11 +1,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 #include "../interpreter/wasm_runtime.h"
 #include "wasm_migration.h"
 #include "wasm_dump.h"
 #include "wasm_dispatch.h"
+
+#include "fd_cache.h"
 
 #define BH_PLATFORM_LINUX 0
 #if WASM_ENABLE_FAST_INTERP == 0
@@ -482,6 +486,94 @@ int wasm_dump_program_counter(
     return 0;
 }
 
+int wasm_dump_socket(){
+    FILE *fp;
+    const char *file = "socket_fd.img";
+    fp = open_image(file, "wb");
+    if (fp == NULL) {
+        fprintf(stderr, "failed to open %s\n", file);
+        return -1;
+    }
+
+    size_t used = fd_cache_get_used();
+
+    // listen/accept 両方の FD を順番通りに送るために一時配列
+    int fds_to_send[2] = {-1, -1};
+
+    for (size_t i = 0; i < used; i++) {
+        struct fd_cache_entry *e = fd_cache_get(i);
+
+        __wasi_fd_t wasi_fd = fd_cache_get_wasi_fd(e);
+        int real_fd = fd_cache_get_real_fd(e);
+        int src = fd_cache_get_source(e);
+
+        // バイナリで書き込む
+        fwrite(&wasi_fd, sizeof(wasi_fd), 1, fp);
+        fwrite(&real_fd, sizeof(real_fd), 1, fp);
+        fwrite(&src, sizeof(src), 1, fp);
+
+        if (src == 1) fds_to_send[0] = real_fd; // listen
+        if (src == 2) fds_to_send[1] = real_fd; // accept
+    }
+    fclose(fp);
+
+    int unix_sock = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (unix_sock < 0) {
+        perror("socket");
+        exit(1);
+    }
+
+    struct sockaddr_un unaddr;
+    memset(&unaddr, 0, sizeof(unaddr));
+    unaddr.sun_family = AF_UNIX;
+    strncpy(unaddr.sun_path, "/tmp/fdpass.sock", sizeof(unaddr.sun_path) - 1);
+
+    if (connect(unix_sock, (struct sockaddr*)&unaddr, sizeof(unaddr)) < 0) {
+        perror("connect");
+        close(unix_sock);
+        exit(1);
+    }
+
+    // listen -> accept の順で送信
+    for (int i = 0; i < 2; i++) {
+        if (fds_to_send[i] < 0) continue; // FD が無い場合はスキップ
+
+        int fd = fds_to_send[i];
+
+        struct msghdr msg = {0};
+        struct iovec io;
+        char buf[CMSG_SPACE(sizeof(fd))];
+        char data = 'F';
+
+        memset(buf, 0, sizeof(buf));
+
+        io.iov_base = &data;
+        io.iov_len = sizeof(data);
+        msg.msg_iov = &io;
+        msg.msg_iovlen = 1;
+        msg.msg_control = buf;
+        msg.msg_controllen = sizeof(buf);
+
+        struct cmsghdr* cmsg = CMSG_FIRSTHDR(&msg);
+        cmsg->cmsg_level = SOL_SOCKET;
+        cmsg->cmsg_type  = SCM_RIGHTS;
+        cmsg->cmsg_len   = CMSG_LEN(sizeof(fd));
+
+        memcpy(CMSG_DATA(cmsg), &fd, sizeof(fd));
+
+        if (sendmsg(unix_sock, &msg, 0) < 0) {
+            fprintf(stderr, "sendmsg() failed: %s\n", strerror(errno));
+            close(unix_sock);
+            exit(1);
+        }
+
+        printf("FD sent %d (src=%d)\n", fd, i==0 ? 1 : 2);
+    }
+
+    close(unix_sock);
+    return 0;
+}
+
 int wasm_dump(WASMExecEnv *exec_env,
          WASMModuleInstance *module,
          WASMMemoryInstance *memory,
@@ -539,6 +631,12 @@ int wasm_dump(WASMExecEnv *exec_env,
     fprintf(stderr, "stack, %lu\n", get_time(ts1, ts2));
     if (rc < 0) {
         LOG_ERROR("Failed to dump frame\n");
+        return rc;
+    }
+    fd_cache_dump();
+    rc = wasm_dump_socket();
+    if (rc < 0) {
+        LOG_ERROR("Failed to dump socket\n");
         return rc;
     }
 

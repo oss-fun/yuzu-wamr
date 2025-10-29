@@ -1443,8 +1443,8 @@ static int dispatch_count = 0;
 int ckpt_point = -1;
 #define CHECK_DUMP()                                                        \
     dispatch_count++;                                                       \
-    if (wasm_get_checkpoint() || dispatch_count == ckpt_point) {            \
-        DO_CHECKPOINT();                                                    \
+    if (wasm_get_checkpoint() /*|| dispatch_count == ckpt_point*/) {            \
+        DO_CHECKPOINT();                                                \
     }
 
 // #define FETCH_OPCODE_AND_DISPATCH() goto *handle_table[*frame_ip++]

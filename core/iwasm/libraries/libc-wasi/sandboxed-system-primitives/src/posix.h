@@ -87,4 +87,6 @@ addr_pool_search(struct addr_pool *, const char *);
 void
 addr_pool_destroy(struct addr_pool *);
 
+FILE *open_image(const char *file, const char *flag);
+
 #endif

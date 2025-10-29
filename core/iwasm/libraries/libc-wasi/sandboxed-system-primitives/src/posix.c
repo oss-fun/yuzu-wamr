@@ -11,6 +11,10 @@
 //
 // Copyright (c) 2016-2018 Nuxi, https://nuxi.nl/
 
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+
 #include "ssp_config.h"
 #include "bh_platform.h"
 #include "blocking_op.h"
@@ -22,6 +26,8 @@
 #include "refcount.h"
 #include "rights.h"
 #include "str.h"
+#include "fd_cache.h"
+
 
 /* Some platforms (e.g. Windows) already define `min()` macro.
  We're undefing it here to make sure the `min` call does exactly
@@ -337,17 +343,6 @@ struct fd_entry {
     __wasi_rights_t rights_inheriting;
 };
 
-bool
-fd_table_init(struct fd_table *ft)
-{
-    if (!rwlock_initialize(&ft->lock))
-        return false;
-    ft->entries = NULL;
-    ft->size = 0;
-    ft->used = 0;
-    return true;
-}
-
 // Looks up a file descriptor table entry by number and required rights.
 static __wasi_errno_t
 fd_table_get_entry(struct fd_table *ft, __wasi_fd_t fd,
@@ -405,6 +400,20 @@ fd_table_grow(struct fd_table *ft, size_t min, size_t incr)
     return true;
 }
 
+bool
+fd_table_init(struct fd_table *ft)
+{
+    if (!rwlock_initialize(&ft->lock))
+        return false;
+    ft->entries = NULL;
+    ft->size = 0;
+    ft->used = 0;
+    rwlock_wrlock(&ft->lock);
+    fd_table_grow(ft, 0, 64);
+    rwlock_unlock(&ft->lock);
+    return true;
+}
+
 // Allocates a new file descriptor object.
 static __wasi_errno_t
 fd_object_new(__wasi_filetype_t type, bool is_stdio, struct fd_object **fo)
@@ -426,6 +435,8 @@ fd_table_attach(struct fd_table *ft, __wasi_fd_t fd, struct fd_object *fo,
                 __wasi_rights_t rights_base, __wasi_rights_t rights_inheriting)
     REQUIRES_EXCLUSIVE(ft->lock) CONSUMES(fo->refcount)
 {
+    //printf("[fd_table_attach] attaching fd=%u, ft->size=%zu, ft->used=%zu, current_object=%p, ", fd, ft->size, ft->used, (void*)ft->entries[fd].object);
+    //printf("rights_base=%" PRIu64 ", rights_inheriting=%" PRIu64 "\n", rights_base, rights_inheriting);
     assert(ft->size > fd && "File descriptor table too small");
     struct fd_entry *fe = &ft->entries[fd];
     assert(fe->object == NULL
@@ -587,7 +598,6 @@ fd_table_insert_existing(struct fd_table *ft, __wasi_fd_t in,
         return false;
 #endif
     }
-
     error = fd_object_new(type, is_stdio, &fo);
     if (error != 0)
         return false;
@@ -632,6 +642,24 @@ fd_table_unused(struct fd_table *ft, __wasi_fd_t *out) REQUIRES_SHARED(ft->lock)
     }
 }
 
+static __wasi_errno_t
+fd_table_unused_preserve(struct fd_table *ft, __wasi_fd_t *out) REQUIRES_SHARED(ft->lock)
+{
+    assert(ft->size > ft->used && "File descriptor table has no free slots");
+    for (;;) {
+        uintmax_t random_fd = 0;
+        __wasi_errno_t error = random_uniform_preserve(ft->size, &random_fd);
+
+        if (error != __WASI_ESUCCESS)
+            return error;
+
+        if (ft->entries[(__wasi_fd_t)random_fd].object == NULL) {
+            *out = (__wasi_fd_t)random_fd;
+            return error;
+        }
+    }
+}
+
 // Inserts a file descriptor object into an unused slot of the file
 // descriptor table.
 static __wasi_errno_t
@@ -657,6 +685,36 @@ fd_table_insert(wasm_exec_env_t exec_env, struct fd_table *ft,
 
     fd_table_attach(ft, *out, fo, rights_base, rights_inheriting);
     rwlock_unlock(&ft->lock);
+
+    return error;
+}
+
+static __wasi_errno_t
+fd_table_insert_preserve(wasm_exec_env_t exec_env, struct fd_table *ft,
+                struct fd_object *fo, __wasi_rights_t rights_base,
+                __wasi_rights_t rights_inheriting, __wasi_fd_t *out)
+    REQUIRES_UNLOCKED(ft->lock) UNLOCKS(fo->refcount)
+{
+    // Grow the file descriptor table if needed.
+    rwlock_wrlock(&ft->lock);
+    if (!fd_table_grow(ft, 0, 1)) {
+        rwlock_unlock(&ft->lock);
+        fd_object_release(exec_env, fo);
+        return convert_errno(errno);
+    }
+
+    __wasi_errno_t error = fd_table_unused_preserve(ft, out);
+
+    if (error != __WASI_ESUCCESS) {
+        rwlock_unlock(&ft->lock);
+        return error;
+    }
+
+    fd_table_attach(ft, *out, fo, rights_base, rights_inheriting);
+    rwlock_unlock(&ft->lock);
+
+    //printf("preserved Vfd = %d\n", *out);
+    fd_cache_insert(*out, fo->file_handle, FD_SOURCE_NONE);
     return error;
 }
 
@@ -687,6 +745,158 @@ fd_table_insert_fd(wasm_exec_env_t exec_env, struct fd_table *ft,
     return fd_table_insert(exec_env, ft, fo, rights_base, rights_inheriting,
                            out);
 }
+
+static __wasi_errno_t
+fd_table_insert_fd_preserve(wasm_exec_env_t exec_env, struct fd_table *ft,
+                   os_file_handle in, __wasi_filetype_t type,
+                   __wasi_rights_t rights_base,
+                   __wasi_rights_t rights_inheriting, __wasi_fd_t *out)
+    REQUIRES_UNLOCKED(ft->lock)
+{
+    struct fd_object *fo;
+
+    __wasi_errno_t error = fd_object_new(type, false, &fo);
+    if (error != 0) {
+        os_close(in, false);
+        return error;
+    }
+
+    fo->file_handle = in;
+    if (type == __WASI_FILETYPE_DIRECTORY) {
+        if (!mutex_init(&fo->directory.lock)) {
+            fd_object_release(exec_env, fo);
+            return (__wasi_errno_t)-1;
+        }
+        fo->directory.handle = os_get_invalid_dir_stream();
+    }
+    return fd_table_insert_preserve(exec_env, ft, fo, rights_base, rights_inheriting,
+                           out);
+}
+
+bool fd_table_restore(struct fd_table *ft) {
+    if (!rwlock_initialize(&ft->lock)) {
+        return false;
+    }
+    ft->entries = NULL;
+    ft->size = 0;
+    ft->used = 0;
+    rwlock_wrlock(&ft->lock);
+    fd_table_grow(ft, 0, 64);
+    rwlock_unlock(&ft->lock);
+
+    FILE *fp;
+    const char *file = "socket_fd.img";
+    fp = open_image(file, "rb");
+    if (fp == NULL) {
+        printf("failed to open %s\n", file);
+        return false;
+    }
+
+    // 保存された fd 情報を一時的に格納
+    struct {
+        __wasi_fd_t wasi_fd;
+        int src;
+    } entries[16];  // FD 数が少ない前提
+    int entry_count = 0;
+
+    while (1) {
+        __wasi_fd_t wasi_fd;
+        int real_fd;
+        int src;
+
+        size_t n1 = fread(&wasi_fd, sizeof(wasi_fd), 1, fp);
+        size_t n2 = fread(&real_fd, sizeof(real_fd), 1, fp);
+        size_t n3 = fread(&src, sizeof(src), 1, fp);
+
+        if (n1 != 1 || n2 != 1 || n3 != 1) {
+            if (feof(fp)) break;
+            perror("fread");
+            fclose(fp);
+            return false;
+        }
+
+        if (src == 1 || src == 2) {
+            entries[entry_count].wasi_fd = wasi_fd;
+            entries[entry_count].src = src;
+            entry_count++;
+        }
+    }
+    fclose(fp);
+
+    // --- listen (src==1) → accept (src==2) の順でFDを受け取る ---
+    for (int i = 0; i < entry_count; i++) {
+        if (entries[i].src != 1 && entries[i].src != 2) continue;
+
+        int recv_sock = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (recv_sock < 0) {
+            perror("socket");
+            return false;
+        }
+
+        struct sockaddr_un addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sun_family = AF_UNIX;
+        strncpy(addr.sun_path, "/tmp/runtime.sock", sizeof(addr.sun_path) - 1);
+
+        if (connect(recv_sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+            perror("connect");
+            close(recv_sock);
+            return false;
+        }
+
+        const char *req = "GETFD";
+        if (write(recv_sock, req, strlen(req)) < 0) {
+            perror("write");
+            close(recv_sock);
+            return false;
+        }
+
+        struct msghdr msg;
+        struct iovec io;
+        char buf[1];
+        char control[CMSG_SPACE(sizeof(int))];
+
+        memset(&msg, 0, sizeof(msg));
+        memset(control, 0, sizeof(control));
+
+        io.iov_base = buf;
+        io.iov_len = sizeof(buf);
+        msg.msg_iov = &io;
+        msg.msg_iovlen = 1;
+        msg.msg_control = control;
+        msg.msg_controllen = sizeof(control);
+
+        if (recvmsg(recv_sock, &msg, 0) < 0) {
+            perror("recvmsg");
+            close(recv_sock);
+            return false;
+        }
+
+        struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+        if (!cmsg || cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS) {
+            fprintf(stderr, "Invalid control message\n");
+            close(recv_sock);
+            return false;
+        }
+
+        int received_fd;
+        memcpy(&received_fd, CMSG_DATA(cmsg), sizeof(received_fd));
+
+        /*printf("[fd_table_restore] received %s FD=%d, wasi_fd=%u\n",
+               (entries[i].src == 1) ? "listen" : "accept",
+               received_fd, entries[i].wasi_fd);*/
+
+        if (!fd_table_insert_existing(ft, entries[i].wasi_fd, received_fd, false)) {
+            fprintf(stderr, "failed to insert fd (src=%d)\n", entries[i].src);
+        }
+        fd_cache_insert(entries[i].wasi_fd, received_fd, entries[i].src);
+
+        close(recv_sock);
+    }
+
+    return true;
+}
+
 
 __wasi_errno_t
 wasmtime_ssp_fd_prestat_get(struct fd_prestats *prestats, __wasi_fd_t fd,
@@ -2346,12 +2556,17 @@ wasi_ssp_sock_accept(wasm_exec_env_t exec_env, struct fd_table *curfds,
         goto fail;
     }
 
-    error = fd_table_insert_fd(exec_env, curfds, new_sock, wasi_type, max_base,
+    error = fd_table_insert_fd_preserve(exec_env, curfds, new_sock, wasi_type, max_base,
                                max_inheriting, fd_new);
     if (error != __WASI_ESUCCESS) {
         /* released in fd_table_insert_fd() */
         new_sock = os_get_invalid_handle();
         goto fail;
+    }
+
+    struct fd_cache_entry* e = fd_cache_find_by_wasi_fd(*fd_new);
+    if (e) {
+        e->source = FD_SOURCE_ACCEPT;
     }
 
     return __WASI_ESUCCESS;
@@ -2701,10 +2916,15 @@ wasi_ssp_sock_open(wasm_exec_env_t exec_env, struct fd_table *curfds,
     }
 
     // TODO: base rights and inheriting rights ?
-    error = fd_table_insert_fd(exec_env, curfds, sock, wasi_type, max_base,
+    error = fd_table_insert_fd_preserve(exec_env, curfds, sock, wasi_type, max_base,
                                max_inheriting, sockfd);
     if (error != __WASI_ESUCCESS) {
         return error;
+    }
+
+    struct fd_cache_entry* e = fd_cache_find_by_wasi_fd(*sockfd);
+    if (e) {
+        e->source = FD_SOURCE_OPEN;
     }
 
     return __WASI_ESUCCESS;

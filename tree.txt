@@ -1,0 +1,576 @@
+.
+├── build-scripts
+│   └── esp-idf
+│       └── wamr
+├── ci
+├── core
+│   ├── deps
+│   ├── iwasm
+│   │   ├── aot
+│   │   │   ├── arch
+│   │   │   └── debug
+│   │   ├── common
+│   │   │   ├── arch
+│   │   │   └── gc
+│   │   │       └── stringref
+│   │   ├── compilation
+│   │   │   ├── debug
+│   │   │   └── simd
+│   │   ├── doc
+│   │   │   └── images
+│   │   ├── fast-jit
+│   │   │   ├── cg
+│   │   │   │   └── x86-64
+│   │   │   └── fe
+│   │   ├── include
+│   │   ├── interpreter
+│   │   ├── libraries
+│   │   │   ├── debug-engine
+│   │   │   ├── lib-pthread
+│   │   │   ├── lib-rats
+│   │   │   ├── lib-socket
+│   │   │   │   ├── build
+│   │   │   │   ├── inc
+│   │   │   │   ├── src
+│   │   │   │   │   └── wasi
+│   │   │   │   └── test
+│   │   │   ├── lib-wasi-threads
+│   │   │   │   ├── stress-test
+│   │   │   │   ├── test
+│   │   │   │   └── unit-test
+│   │   │   ├── libc-builtin
+│   │   │   ├── libc-emcc
+│   │   │   ├── libc-uvwasi
+│   │   │   ├── libc-wasi
+│   │   │   │   └── sandboxed-system-primitives
+│   │   │   │       ├── include
+│   │   │   │       └── src
+│   │   │   ├── thread-mgr
+│   │   │   └── wasi-nn
+│   │   │       ├── cmake
+│   │   │       ├── external
+│   │   │       ├── include
+│   │   │       ├── src
+│   │   │       │   └── utils
+│   │   │       └── test
+│   │   │           └── models
+│   │   └── migration
+│   └── shared
+│       ├── coap
+│       │   ├── er-coap
+│       │   └── extension
+│       ├── mem-alloc
+│       │   └── ems
+│       ├── platform
+│       │   ├── alios
+│       │   ├── android
+│       │   ├── common
+│       │   │   ├── freertos
+│       │   │   ├── libc-util
+│       │   │   ├── math
+│       │   │   ├── memory
+│       │   │   └── posix
+│       │   ├── cosmopolitan
+│       │   ├── darwin
+│       │   ├── ego
+│       │   ├── esp-idf
+│       │   ├── freebsd
+│       │   ├── include
+│       │   ├── linux
+│       │   ├── linux-sgx
+│       │   │   └── untrusted
+│       │   ├── nuttx
+│       │   ├── riot
+│       │   ├── rt-thread
+│       │   ├── vxworks
+│       │   ├── windows
+│       │   └── zephyr
+│       └── utils
+│           └── uncommon
+├── doc
+│   └── pics
+├── language-bindings
+│   ├── go
+│   │   ├── samples
+│   │   │   └── wasm-app
+│   │   └── wamr
+│   │       └── packaged
+│   │           ├── include
+│   │           └── lib
+│   │               ├── darwin-aarch64
+│   │               ├── darwin-amd64
+│   │               └── linux-amd64
+│   ├── python
+│   │   ├── src
+│   │   │   └── wamr
+│   │   │       ├── libs
+│   │   │       ├── wamrapi
+│   │   │       └── wasmcapi
+│   │   ├── utils
+│   │   ├── wamr-api
+│   │   │   └── samples
+│   │   │       ├── basic
+│   │   │       └── native-symbol
+│   │   └── wasm-c-api
+│   │       ├── docs
+│   │       │   └── images
+│   │       ├── samples
+│   │       ├── tests
+│   │       └── utils
+│   └── rust
+├── product-mini
+│   ├── app-samples
+│   │   ├── hello-world
+│   │   └── hello-world-cmake
+│   └── platforms
+│       ├── alios-things
+│       │   └── src
+│       ├── android
+│       ├── common
+│       ├── cosmopolitan
+│       ├── darwin
+│       ├── esp-idf
+│       │   └── main
+│       ├── freebsd
+│       ├── ios
+│       ├── linux
+│       │   └── build
+│       │       ├── CMakeFiles
+│       │       │   ├── 3.22.1
+│       │       │   │   ├── CompilerIdASM
+│       │       │   │   ├── CompilerIdC
+│       │       │   │   │   └── tmp
+│       │       │   │   └── CompilerIdCXX
+│       │       │   │       └── tmp
+│       │       │   ├── CMakeTmp
+│       │       │   ├── Progress
+│       │       │   ├── iwasm.dir
+│       │       │   │   └── home
+│       │       │   │       └── yuzu
+│       │       │   │           └── funera1-wamr
+│       │       │   │               └── core
+│       │       │   │                   └── shared
+│       │       │   │                       └── utils
+│       │       │   │                           └── uncommon
+│       │       │   ├── libiwasm.dir
+│       │       │   │   └── home
+│       │       │   │       └── yuzu
+│       │       │   │           └── funera1-wamr
+│       │       │   │               └── core
+│       │       │   │                   ├── iwasm
+│       │       │   │                   │   ├── aot
+│       │       │   │                   │   │   └── arch
+│       │       │   │                   │   ├── common
+│       │       │   │                   │   │   └── arch
+│       │       │   │                   │   ├── interpreter
+│       │       │   │                   │   ├── libraries
+│       │       │   │                   │   │   ├── libc-builtin
+│       │       │   │                   │   │   └── libc-wasi
+│       │       │   │                   │   │       └── sandboxed-system-primitives
+│       │       │   │                   │   │           └── src
+│       │       │   │                   │   └── migration
+│       │       │   │                   └── shared
+│       │       │   │                       ├── mem-alloc
+│       │       │   │                       │   └── ems
+│       │       │   │                       ├── platform
+│       │       │   │                       │   ├── common
+│       │       │   │                       │   │   ├── libc-util
+│       │       │   │                       │   │   └── posix
+│       │       │   │                       │   └── linux
+│       │       │   │                       └── utils
+│       │       │   └── vmlib.dir
+│       │       │       └── home
+│       │       │           └── yuzu
+│       │       │               └── funera1-wamr
+│       │       │                   └── core
+│       │       │                       ├── iwasm
+│       │       │                       │   ├── aot
+│       │       │                       │   │   └── arch
+│       │       │                       │   ├── common
+│       │       │                       │   │   └── arch
+│       │       │                       │   ├── interpreter
+│       │       │                       │   ├── libraries
+│       │       │                       │   │   ├── libc-builtin
+│       │       │                       │   │   └── libc-wasi
+│       │       │                       │   │       └── sandboxed-system-primitives
+│       │       │                       │   │           └── src
+│       │       │                       │   └── migration
+│       │       │                       └── shared
+│       │       │                           ├── mem-alloc
+│       │       │                           │   └── ems
+│       │       │                           ├── platform
+│       │       │                           │   ├── common
+│       │       │                           │   │   ├── libc-util
+│       │       │                           │   │   └── posix
+│       │       │                           │   └── linux
+│       │       │                           └── utils
+│       │       └── test_wrgsbase
+│       │           └── CMakeFiles
+│       │               └── CMakeTmp
+│       ├── linux-sgx
+│       │   └── enclave-sample
+│       │       ├── App
+│       │       └── Enclave
+│       ├── nuttx
+│       ├── posix
+│       ├── riot
+│       ├── rt-thread
+│       ├── vxworks
+│       ├── windows
+│       └── zephyr
+│           └── simple
+│               ├── boards
+│               └── src
+│                   └── wasm-app-riscv64
+├── samples
+│   ├── basic
+│   │   ├── src
+│   │   └── wasm-apps
+│   ├── bh-atomic
+│   ├── debug-tools
+│   │   ├── cmake
+│   │   └── wasm-apps
+│   ├── file
+│   │   ├── src
+│   │   └── wasm-app
+│   ├── gui
+│   │   ├── wasm-apps
+│   │   │   ├── decrease
+│   │   │   │   └── src
+│   │   │   └── increase
+│   │   │       └── src
+│   │   └── wasm-runtime-wgl
+│   │       └── src
+│   │           └── platform
+│   │               └── zephyr
+│   ├── inst-context
+│   │   ├── src
+│   │   └── wasm-apps
+│   ├── inst-context-threads
+│   │   ├── src
+│   │   └── wasm-apps
+│   ├── linux-perf
+│   │   ├── cmake
+│   │   ├── host
+│   │   ├── pics
+│   │   └── wasm
+│   ├── littlevgl
+│   │   └── vgl-wasm-runtime
+│   │       └── src
+│   │           └── platform
+│   │               └── zephyr
+│   ├── mem-allocator
+│   ├── multi-module
+│   │   ├── src
+│   │   └── wasm-apps
+│   ├── multi-thread
+│   │   └── wasm-apps
+│   ├── native-lib
+│   │   └── wasm-app
+│   ├── native-stack-overflow
+│   │   ├── src
+│   │   └── wasm-apps
+│   ├── ref-types
+│   │   └── src
+│   ├── sgx-ra
+│   │   ├── non-sgx-verify
+│   │   │   └── csharp
+│   │   └── wasm-app
+│   ├── shared-module
+│   │   ├── src
+│   │   └── wasm-apps
+│   ├── socket-api
+│   │   └── wasm-src
+│   │       ├── build
+│   │       │   └── CMakeFiles
+│   │       │       ├── 3.22.1
+│   │       │       │   ├── CompilerIdC
+│   │       │       │   │   └── tmp
+│   │       │       │   └── CompilerIdCXX
+│   │       │       │       └── tmp
+│   │       │       ├── CMakeTmp
+│   │       │       ├── MODULE_tcp_server.dir
+│   │       │       └── socket_wasi_ext.dir
+│   │       │           └── home
+│   │       │               └── yuzu
+│   │       │                   └── funera1-wamr
+│   │       │                       └── core
+│   │       │                           └── iwasm
+│   │       │                               └── libraries
+│   │       │                                   └── lib-socket
+│   │       │                                       └── src
+│   │       │                                           └── wasi
+│   │       └── inc
+│   ├── spawn-thread
+│   │   ├── src
+│   │   └── wasm-apps
+│   ├── terminate
+│   │   ├── src
+│   │   └── wasm-apps
+│   ├── wasi-threads
+│   │   └── wasm-apps
+│   ├── wasm-c-api
+│   │   └── src
+│   │       └── utils
+│   ├── wasm-c-api-imports
+│   │   ├── host
+│   │   └── wasm
+│   │       └── inc
+│   └── workload
+│       ├── XNNPACK
+│       ├── bwa
+│       ├── cmake
+│       ├── include
+│       ├── meshoptimizer
+│       ├── tensorflow
+│       └── wasm-av1
+├── test-tools
+│   ├── addr2line
+│   ├── aot-analyzer
+│   │   ├── include
+│   │   └── src
+│   ├── append-aot-to-wasm
+│   ├── binarydump-tool
+│   ├── flame-graph-helper
+│   ├── pick-up-emscripten-headers
+│   └── wamr-ide
+│       ├── Media
+│       ├── Script
+│       ├── VSCode-Extension
+│       │   ├── formatters
+│       │   ├── resource
+│       │   │   ├── debug
+│       │   │   │   ├── darwin
+│       │   │   │   ├── linux
+│       │   │   │   └── windows
+│       │   │   ├── scripts
+│       │   │   ├── test
+│       │   │   ├── wamr-sdk
+│       │   │   │   └── libc-builtin-sysroot
+│       │   │   │       └── include
+│       │   │   └── webview
+│       │   │       ├── css
+│       │   │       ├── js
+│       │   │       └── page
+│       │   └── src
+│       │       ├── test
+│       │       │   └── suite
+│       │       ├── utilities
+│       │       └── view
+│       ├── WASM-Debug-Server
+│       │   └── Docker
+│       │       └── resource
+│       └── WASM-Toolchain
+│           └── Docker
+│               └── resource
+├── tests
+│   ├── benchmarks
+│   │   ├── coremark
+│   │   ├── dhrystone
+│   │   │   ├── include
+│   │   │   └── src
+│   │   ├── jetstream
+│   │   ├── libsodium
+│   │   ├── polybench
+│   │   └── sightglass
+│   ├── fuzz
+│   │   └── wasm-mutator-fuzz
+│   │       ├── portal
+│   │       │   ├── public
+│   │       │   └── src
+│   │       │       └── assets
+│   │       ├── server
+│   │       │   └── app
+│   │       └── workspace
+│   ├── malformed
+│   │   ├── fuzz
+│   │   └── github
+│   ├── regression
+│   │   └── ba-issues
+│   │       ├── issues
+│   │       │   ├── issue-2700
+│   │       │   ├── issue-2701
+│   │       │   ├── issue-2702
+│   │       │   ├── issue-2703
+│   │       │   ├── issue-2704
+│   │       │   ├── issue-2705
+│   │       │   ├── issue-2706
+│   │       │   ├── issue-270801
+│   │       │   ├── issue-270802
+│   │       │   ├── issue-2709
+│   │       │   ├── issue-2710
+│   │       │   ├── issue-2711
+│   │       │   ├── issue-2712
+│   │       │   ├── issue-2713
+│   │       │   ├── issue-2714
+│   │       │   ├── issue-2720
+│   │       │   ├── issue-2726
+│   │       │   ├── issue-2732
+│   │       │   ├── issue-2759
+│   │       │   ├── issue-2784
+│   │       │   ├── issue-2787
+│   │       │   ├── issue-2790
+│   │       │   ├── issue-2797
+│   │       │   ├── issue-2829
+│   │       │   ├── issue-2832
+│   │       │   ├── issue-2833
+│   │       │   ├── issue-2847
+│   │       │   ├── issue-2849
+│   │       │   ├── issue-2857
+│   │       │   ├── issue-2858
+│   │       │   ├── issue-2861
+│   │       │   ├── issue-2862
+│   │       │   ├── issue-2863
+│   │       │   ├── issue-2865
+│   │       │   ├── issue-2897
+│   │       │   ├── issue-292001
+│   │       │   ├── issue-292002
+│   │       │   ├── issue-2921
+│   │       │   ├── issue-2931
+│   │       │   ├── issue-2942
+│   │       │   ├── issue-2943
+│   │       │   ├── issue-2944
+│   │       │   ├── issue-2945
+│   │       │   ├── issue-2946
+│   │       │   ├── issue-2947
+│   │       │   ├── issue-2948
+│   │       │   ├── issue-2949
+│   │       │   ├── issue-2950
+│   │       │   ├── issue-2951
+│   │       │   ├── issue-2952
+│   │       │   ├── issue-2953
+│   │       │   ├── issue-2954
+│   │       │   ├── issue-2955
+│   │       │   ├── issue-2956
+│   │       │   ├── issue-2958
+│   │       │   ├── issue-2959
+│   │       │   ├── issue-2960
+│   │       │   ├── issue-2961
+│   │       │   ├── issue-2962
+│   │       │   ├── issue-2963
+│   │       │   ├── issue-2964
+│   │       │   ├── issue-2965
+│   │       │   ├── issue-2966
+│   │       │   ├── issue-3020
+│   │       │   ├── issue-3021
+│   │       │   ├── issue-3022
+│   │       │   ├── issue-3023
+│   │       │   ├── issue-3026
+│   │       │   ├── issue-3027
+│   │       │   ├── issue-3061
+│   │       │   ├── issue-3062
+│   │       │   ├── issue-3090
+│   │       │   ├── issue-3122
+│   │       │   ├── issue-3123
+│   │       │   ├── issue-3130
+│   │       │   ├── issue-3137
+│   │       │   ├── issue-315101
+│   │       │   ├── issue-315102
+│   │       │   ├── issue-3165
+│   │       │   ├── issue-3170
+│   │       │   ├── issue-3210
+│   │       │   ├── issue-3286
+│   │       │   ├── issue-3336
+│   │       │   ├── issue-3337
+│   │       │   ├── issue-3346
+│   │       │   ├── issue-3347
+│   │       │   ├── issue-3386
+│   │       │   ├── issue-3387
+│   │       │   ├── issue-3388
+│   │       │   ├── issue-3401
+│   │       │   ├── issue-3402
+│   │       │   ├── issue-3403
+│   │       │   ├── issue-3410
+│   │       │   ├── issue-3411
+│   │       │   ├── issue-3467
+│   │       │   ├── issue-3468
+│   │       │   └── issue-3491
+│   │       └── issues-deprecated
+│   │           ├── issue-47
+│   │           ├── issue-48
+│   │           ├── issue-49
+│   │           ├── issue-50
+│   │           ├── issue-51
+│   │           ├── issue-52
+│   │           ├── issue-53
+│   │           ├── issue-54
+│   │           ├── issue-55
+│   │           ├── issue-56
+│   │           ├── issue-57
+│   │           ├── issue-58
+│   │           ├── issue-59
+│   │           ├── issue-60
+│   │           ├── issue-61
+│   │           ├── issue-62
+│   │           ├── issue-63
+│   │           ├── issue-64
+│   │           ├── issue-65
+│   │           ├── issue-66
+│   │           ├── issue-67
+│   │           ├── issue-68
+│   │           ├── issue-69
+│   │           ├── issue-70
+│   │           ├── issue-71
+│   │           ├── issue-72
+│   │           ├── issue-73
+│   │           ├── issue-74
+│   │           ├── issue-75
+│   │           ├── issue-76
+│   │           ├── issue-77
+│   │           ├── issue-78
+│   │           ├── issue-79
+│   │           ├── issue-80
+│   │           ├── issue-81
+│   │           ├── issue-82
+│   │           ├── issue-83
+│   │           └── issue-84
+│   ├── requirement-engineering
+│   │   └── gc-aot
+│   │       └── wasm-apps
+│   ├── unit
+│   │   ├── aot
+│   │   ├── aot-stack-frame
+│   │   │   └── wasm-apps
+│   │   ├── common
+│   │   ├── compilation
+│   │   │   └── wasm-apps
+│   │   ├── custom-section
+│   │   │   └── wasm-apps
+│   │   ├── gc
+│   │   │   └── wasm-apps
+│   │   ├── interpreter
+│   │   ├── libc-builtin
+│   │   ├── linear-memory-aot
+│   │   ├── linear-memory-wasm
+│   │   │   └── wasm_files
+│   │   ├── linux-perf
+│   │   ├── memory64
+│   │   │   └── wasm-apps
+│   │   ├── running-modes
+│   │   │   └── wasm-apps
+│   │   ├── runtime-common
+│   │   │   └── wasm-apps
+│   │   ├── shared-utils
+│   │   ├── tid-allocator
+│   │   ├── wasm-c-api
+│   │   └── wasm-vm
+│   │       └── wasm-apps
+│   │           ├── app1
+│   │           ├── app2
+│   │           ├── app3
+│   │           └── app4
+│   ├── wamr-compiler
+│   └── wamr-test-suites
+│       ├── requirement-engineering-test-script
+│       ├── spec-test-script
+│       ├── wamr-compiler-test-script
+│       └── wasi-test-script
+├── wamr-compiler
+├── wamr-sdk
+│   └── app
+│       └── libc-builtin-sysroot
+│           ├── include
+│           └── share
+└── zephyr
+
+573 directories, 0 files
