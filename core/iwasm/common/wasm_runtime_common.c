@@ -778,8 +778,8 @@ wasm_runtime_full_init_internal(RuntimeInitArgs *init_args)
         wasm_runtime_destroy();
         return false;
     }
-
-    if (init_args->restore_flag) {
+    const char *envflag = getenv("RUNWASI_RESTORE");
+    if (init_args->restore_flag || (envflag != NULL && strcmp(envflag, "1") == 0)) {
         set_restore_flag(true);
     }
     

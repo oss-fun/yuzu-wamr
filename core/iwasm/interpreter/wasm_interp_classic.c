@@ -1629,7 +1629,9 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
     clock_gettime(CLOCK_MONOTONIC, &ts1);
     fprintf(stderr, "boot_end, %lu\n", (uint64_t)(ts1.tv_sec*1e9) + ts1.tv_nsec);
 
-    if (get_restore_flag()) {
+    const char *envflag = getenv("RUNWASI_RESTORE");
+
+    if (get_restore_flag() || (envflag != NULL && strcmp(envflag, "1") == 0)) {
         // bool done_flag;
         int rc;
         struct timespec ts2;
