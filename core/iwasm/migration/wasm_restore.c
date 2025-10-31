@@ -259,11 +259,9 @@ int wasm_restore_program_counter(
     return 0;
 }
 
-int
-wasm_restore_socket(WASMExecEnv *exec_env){
+int wasm_restore_socket(WASMExecEnv *exec_env){
     WASIContext *wasi_cxt = wasm_runtime_get_wasi_ctx(wasm_runtime_get_module_inst(exec_env));
     fd_table_restore(wasi_cxt->curfds);
-    
     return 0;
 }
 
