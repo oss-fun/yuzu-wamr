@@ -26,25 +26,39 @@ char* get_image_dir()
 
 FILE* open_image(const char* file, const char* flag) {
     char path[1024];  // image_dir + "/" + file 用バッファ
-    char* image_dir = get_image_dir();
 
-    // image_dir の末尾が '/' かどうかを確認
-    size_t len = strlen(image_dir);
-    if (len > 0 && image_dir[len - 1] == '/') {
-        // スラッシュあり → そのまま結合
-        snprintf(path, sizeof(path), "%s%s", image_dir, file);
+    //事前生成の三つはカレントから探したい
+    if (strcmp(file, "tablemap_func") == 0 || 
+        strcmp(file, "tablemap_offset") == 0 || 
+        strcmp(file, "type_table") == 0){
+            
+        FILE *fp = fopen(file, flag);
+        if (fp == NULL) {
+            fprintf(stderr, "failed to open %s\n", file);
+            return NULL;
+        }
+        return fp;
     } else {
-        // スラッシュなし → '/' を補って結合
-        snprintf(path, sizeof(path), "%s/%s", image_dir, file);
-    }
-    snprintf(path, sizeof(path), "%s/%s", image_dir, file);  // パスを構築
+        char* image_dir = get_image_dir();
 
-    FILE *fp = fopen(path, flag);
-    if (fp == NULL) {
-        fprintf(stderr, "failed to open %s\n", file);
-        return NULL;
+        // image_dir の末尾が '/' かどうかを確認
+        size_t len = strlen(image_dir);
+        if (len > 0 && image_dir[len - 1] == '/') {
+            // スラッシュあり → そのまま結合
+            snprintf(path, sizeof(path), "%s%s", image_dir, file);
+        } else {
+            // スラッシュなし → '/' を補って結合
+            snprintf(path, sizeof(path), "%s/%s", image_dir, file);
+        }
+        //snprintf(path, sizeof(path), "%s/%s", image_dir, file);  // パスを構築
+
+        FILE *fp = fopen(path, flag);
+        if (fp == NULL) {
+            fprintf(stderr, "failed to open %s\n", file);
+            return NULL;
+        }
+        return fp;
     }
-    return fp;
 }
 
 
