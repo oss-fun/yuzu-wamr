@@ -3283,7 +3283,7 @@ wasm_runtime_init_wasi(WASMModuleInstanceCommon *module_inst,
                       "Init wasi environment failed: allocate memory failed");
         goto fail;
     }
-    bool restore = get_restore_flag();
+    /*bool restore = get_restore_flag();
     if (restore){
         if (!fd_table_restore(curfds)) {
             set_error_buf(error_buf, error_buf_size,
@@ -3300,6 +3300,12 @@ wasm_runtime_init_wasi(WASMModuleInstanceCommon *module_inst,
             goto fail;
         }
         //printf("restore flag in wasi init %d\n", restore);
+    }*/
+    if (!fd_table_init(curfds)) {
+        set_error_buf(error_buf, error_buf_size,
+            "Init wasi environment failed: "
+            "init fd table failed");
+        goto fail;
     }
     fd_table_inited = true;
 

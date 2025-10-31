@@ -6,6 +6,7 @@
 #include "../interpreter/wasm_runtime.h"
 #include "wasm_migration.h"
 #include "wasm_restore.h"
+#include "posix.h"
 
 static bool restore_flag;
 void set_restore_flag(bool f)
@@ -258,6 +259,14 @@ int wasm_restore_program_counter(
     return 0;
 }
 
+int
+wasm_restore_socket(WASMExecEnv *exec_env){
+    WASIContext *wasi_cxt = wasm_runtime_get_wasi_ctx(wasm_runtime_get_module_inst(exec_env));
+    fd_table_restore(wasi_cxt->curfds);
+    
+    return 0;
+}
+
 int wasm_restore(WASMModuleInstance **module,
             WASMExecEnv **exec_env,
             WASMFunctionInstance **cur_func,
@@ -278,6 +287,7 @@ int wasm_restore(WASMModuleInstance **module,
             bool *done_flag)
 {
     struct timespec ts1, ts2;
+    wasm_restore_socket(*exec_env);
     // restore memory
     clock_gettime(CLOCK_MONOTONIC, &ts1);
     wasm_restore_memory(*module, memory, maddr);

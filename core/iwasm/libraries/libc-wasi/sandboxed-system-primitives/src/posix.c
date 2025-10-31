@@ -777,9 +777,6 @@ bool fd_table_restore(struct fd_table *ft) {
     if (!rwlock_initialize(&ft->lock)) {
         return false;
     }
-    ft->entries = NULL;
-    ft->size = 0;
-    ft->used = 0;
     rwlock_wrlock(&ft->lock);
     fd_table_grow(ft, 0, 64);
     rwlock_unlock(&ft->lock);
@@ -792,11 +789,10 @@ bool fd_table_restore(struct fd_table *ft) {
         return false;
     }
 
-    // 保存された fd 情報を一時的に格納
     struct {
         __wasi_fd_t wasi_fd;
         int src;
-    } entries[16];  // FD 数が少ない前提
+    } entries[32];
     int entry_count = 0;
 
     while (1) {
@@ -823,7 +819,7 @@ bool fd_table_restore(struct fd_table *ft) {
     }
     fclose(fp);
 
-    // --- listen (src==1) → accept (src==2) の順でFDを受け取る ---
+    //listen (src==1) → accept (src==2) の順でFDを受け取る
     for (int i = 0; i < entry_count; i++) {
         if (entries[i].src != 1 && entries[i].src != 2) continue;
 
