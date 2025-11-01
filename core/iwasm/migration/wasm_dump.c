@@ -18,6 +18,15 @@ static char *image_dir = ".";
 void set_image_dir(char* dir)
 {
     image_dir = dir;
+    fprintf(stderr, "[set_image_dir] set %s -> image_dir\n", image_dir);
+    FILE *fp = fopen("/home/yuzu/log.txt", "a"); // 追記モードで開く
+    if (fp != NULL) {
+        fprintf(fp, "[set_image_dir] return %s\n", image_dir);
+        fclose(fp);
+    } else {
+        // 念のためエラー時もstderrに通知
+        fprintf(stderr, "[set_image_dir] failed to open log file\n");
+    }
 }
 char* get_image_dir()
 {
