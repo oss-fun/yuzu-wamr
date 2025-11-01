@@ -1,6 +1,6 @@
 #include "fd_cache.h"
 
-struct fd_cache_entry g_fd_cache[MAX_CACHED_FDS];
+struct fd_cache_entry g_fd_cache[2];
 size_t g_fd_cache_used = 0;
 
 int fd_cache_insert(__wasi_fd_t wasi_fd, int real_fd, fd_source_t source) {
@@ -12,7 +12,7 @@ int fd_cache_insert(__wasi_fd_t wasi_fd, int real_fd, fd_source_t source) {
         }
     }
 
-    if (g_fd_cache_used >= MAX_CACHED_FDS) {
+    if (g_fd_cache_used >= 2) {
         return -1;
     }
 
@@ -56,7 +56,7 @@ struct fd_cache_entry* fd_cache_find_by_source(fd_source_t source) {
 }
 
 void fd_cache_dump(void) {
-    printf("FD Cache (used %zu/%d):\n", g_fd_cache_used, MAX_CACHED_FDS);
+    printf("FD Cache (used %zu/%d):\n", g_fd_cache_used, 2);
     for (size_t i = 0; i < g_fd_cache_used; i++) {
         printf("  [%zu] wasi_fd=%u, real_fd=%d, source=%d\n",
                i,
