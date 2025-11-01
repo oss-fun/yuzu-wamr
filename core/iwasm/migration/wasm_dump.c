@@ -14,10 +14,13 @@
 #define BH_PLATFORM_LINUX 0
 #if WASM_ENABLE_FAST_INTERP == 0
 
-static char *image_dir = ".";
+#define IMAGE_DIR_MAX 128
+
+static char image_dir[IMAGE_DIR_MAX] = ".";
 void set_image_dir(char* dir)
 {
-    image_dir = dir;
+    strncpy(image_dir, dir, IMAGE_DIR_MAX - 1);
+    image_dir[IMAGE_DIR_MAX - 1] = '\0';
     fprintf(stderr, "[set_image_dir] set %s -> image_dir\n", image_dir);
     FILE *fp = fopen("/tmp/log.txt", "a");
     if (fp != NULL) {
