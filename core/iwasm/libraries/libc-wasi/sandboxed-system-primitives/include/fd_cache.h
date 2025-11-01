@@ -19,7 +19,7 @@ struct fd_cache_entry {
     fd_source_t source;
 };
 
-#define MAX_CACHED_FDS 32
+#define MAX_CACHED_FDS 2
 
 extern struct fd_cache_entry g_fd_cache[MAX_CACHED_FDS];
 extern size_t g_fd_cache_used;

@@ -974,10 +974,11 @@ wasmtime_ssp_fd_close(wasm_exec_env_t exec_env, struct fd_table *curfds,
     if (error == __WASI_EBADF) {
         return __WASI_ESUCCESS;
     }
-
+    /*printf("check cache_find_by_wasi_fd(%d)\n", fd);
     if (fd_cache_find_by_wasi_fd(fd) != NULL){
+        printf("remove(%d)\n", fd);
         fd_cache_remove_by_wasi_fd(fd);
-    }
+    }*/
 
     return error;
 }

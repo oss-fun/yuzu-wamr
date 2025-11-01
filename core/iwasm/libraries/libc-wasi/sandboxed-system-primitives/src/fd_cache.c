@@ -4,11 +4,23 @@ struct fd_cache_entry g_fd_cache[MAX_CACHED_FDS];
 size_t g_fd_cache_used = 0;
 
 int fd_cache_insert(__wasi_fd_t wasi_fd, int real_fd, fd_source_t source) {
-    if (g_fd_cache_used >= MAX_CACHED_FDS) return -1;
+    for (size_t i = 0; i < g_fd_cache_used; i++) {
+        if (g_fd_cache[i].real_fd == real_fd) {
+            g_fd_cache[i].wasi_fd = wasi_fd;
+            g_fd_cache[i].source = source;
+            return 0;
+        }
+    }
+
+    if (g_fd_cache_used >= MAX_CACHED_FDS) {
+        return -1;
+    }
+
     g_fd_cache[g_fd_cache_used].wasi_fd = wasi_fd;
     g_fd_cache[g_fd_cache_used].real_fd = real_fd;
     g_fd_cache[g_fd_cache_used].source = source;
     g_fd_cache_used++;
+
     return 0;
 }
 
