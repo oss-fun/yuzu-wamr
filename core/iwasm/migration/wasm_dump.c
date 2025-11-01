@@ -21,7 +21,7 @@ void set_image_dir(char* dir)
 }
 char* get_image_dir()
 {
-    printf("[get_image_dir] return %s\n", image_dir);
+    fprintf(stderr, "[get_image_dir] return %s\n", image_dir);
     return image_dir;
 }
 
