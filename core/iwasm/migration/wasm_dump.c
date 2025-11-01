@@ -19,7 +19,7 @@ void set_image_dir(char* dir)
 {
     image_dir = dir;
     fprintf(stderr, "[set_image_dir] set %s -> image_dir\n", image_dir);
-    FILE *fp = fopen("/home/yuzu/log.txt", "a"); // 追記モードで開く
+    FILE *fp = fopen("/tmp/log.txt", "a");
     if (fp != NULL) {
         fprintf(fp, "[set_image_dir] return %s\n", image_dir);
         fclose(fp);
