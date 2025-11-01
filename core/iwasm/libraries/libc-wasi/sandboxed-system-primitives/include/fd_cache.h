@@ -25,6 +25,7 @@ extern struct fd_cache_entry g_fd_cache[MAX_CACHED_FDS];
 extern size_t g_fd_cache_used;
 
 int fd_cache_insert(__wasi_fd_t wasi_fd, int real_fd, fd_source_t source);
+int fd_cache_remove_by_wasi_fd(__wasi_fd_t wasi_fd);
 struct fd_cache_entry* fd_cache_find_by_wasi_fd(__wasi_fd_t wasi_fd);
 struct fd_cache_entry* fd_cache_find_by_source(fd_source_t source);
 void fd_cache_dump(void);

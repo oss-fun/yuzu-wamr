@@ -12,6 +12,19 @@ int fd_cache_insert(__wasi_fd_t wasi_fd, int real_fd, fd_source_t source) {
     return 0;
 }
 
+int fd_cache_remove_by_wasi_fd(__wasi_fd_t wasi_fd) {
+    for (size_t i = 0; i < g_fd_cache_used; i++) {
+        if (g_fd_cache[i].wasi_fd == wasi_fd) {
+            for (size_t j = i; j + 1 < g_fd_cache_used; j++) {
+                g_fd_cache[j] = g_fd_cache[j + 1];
+            }
+            g_fd_cache_used--;
+            return 0;
+        }
+    }
+    return -1;
+}
+
 struct fd_cache_entry* fd_cache_find_by_wasi_fd(__wasi_fd_t wasi_fd) {
     for (size_t i = 0; i < g_fd_cache_used; i++) {
         if (g_fd_cache[i].wasi_fd == wasi_fd) {
