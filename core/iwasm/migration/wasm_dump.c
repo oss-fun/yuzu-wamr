@@ -17,23 +17,14 @@
 #define IMAGE_DIR_MAX 128
 
 static char image_dir[IMAGE_DIR_MAX] = ".";
+//wamr-Rust-SDK経由だとポインタのドロップが起きる可能性があるので固定長文字列でC側にコピー
 void set_image_dir(char* dir)
 {
     strncpy(image_dir, dir, IMAGE_DIR_MAX - 1);
     image_dir[IMAGE_DIR_MAX - 1] = '\0';
-    fprintf(stderr, "[set_image_dir] set %s -> image_dir\n", image_dir);
-    FILE *fp = fopen("/tmp/log.txt", "a");
-    if (fp != NULL) {
-        fprintf(fp, "[set_image_dir] return %s\n", image_dir);
-        fclose(fp);
-    } else {
-        // 念のためエラー時もstderrに通知
-        fprintf(stderr, "[set_image_dir] failed to open log file\n");
-    }
 }
 char* get_image_dir()
 {
-    fprintf(stderr, "[get_image_dir] return %s\n", image_dir);
     return image_dir;
 }
 
