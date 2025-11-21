@@ -612,13 +612,23 @@ int wasm_dump(WASMExecEnv *exec_env,
 {
     int rc;
     struct timespec ts1, ts2;
+    /* write timing results to a file instead of stderr */
+    FILE *time_fp = open_image("dump_time.log", "a");
+    bool time_fp_is_stderr = false;
+    if (time_fp == NULL) {
+        /* fallback to stderr if we can't open the file */
+        time_fp = stderr;
+        time_fp_is_stderr = true;
+    }
     // dump linear memory
     clock_gettime(CLOCK_MONOTONIC, &ts1);
     rc = wasm_dump_memory(memory);
     clock_gettime(CLOCK_MONOTONIC, &ts2);
-    fprintf(stderr, "memory, %lu\n", get_time(ts1, ts2));
+    long long memory_dump_time = get_time(ts1, ts2);
+    fprintf(time_fp, "memory, %lldns\n", (long long)memory_dump_time);
     if (rc < 0) {
         LOG_ERROR("Failed to dump linear memory\n");
+        if (!time_fp_is_stderr) fclose(time_fp);
         return rc;
     }
 
@@ -626,9 +636,11 @@ int wasm_dump(WASMExecEnv *exec_env,
     clock_gettime(CLOCK_MONOTONIC, &ts1);
     rc = wasm_dump_global(module, globals, global_data);
     clock_gettime(CLOCK_MONOTONIC, &ts2);
-    fprintf(stderr, "global, %lu\n", get_time(ts1, ts2));
+    long long global_dump_time = get_time(ts1, ts2);
+    fprintf(time_fp, "global, %lldns\n", (long long)global_dump_time);
     if (rc < 0) {
         LOG_ERROR("Failed to dump globals\n");
+        if (!time_fp_is_stderr) fclose(time_fp);
         return rc;
     }
 
@@ -636,9 +648,11 @@ int wasm_dump(WASMExecEnv *exec_env,
     clock_gettime(CLOCK_MONOTONIC, &ts1);
     rc = wasm_dump_program_counter(module, cur_func, frame_ip);
     clock_gettime(CLOCK_MONOTONIC, &ts2);
-    fprintf(stderr, "program counter, %lu\n", get_time(ts1, ts2));
+    long long program_counter_dump_time = get_time(ts1, ts2);
+    fprintf(time_fp, "program counter, %lldns\n", (long long)program_counter_dump_time);
     if (rc < 0) {
         LOG_ERROR("Failed to dump program_counter\n");
+        if (!time_fp_is_stderr) fclose(time_fp);
         return rc;
     }
 
@@ -646,19 +660,28 @@ int wasm_dump(WASMExecEnv *exec_env,
     clock_gettime(CLOCK_MONOTONIC, &ts1);
     rc = wasm_dump_stack(exec_env, frame);
     clock_gettime(CLOCK_MONOTONIC, &ts2);
-    fprintf(stderr, "stack, %lu\n", get_time(ts1, ts2));
+    long long stack_dump_time = get_time(ts1, ts2);
+    fprintf(time_fp, "stack, %lldns\n", (long long)stack_dump_time);
     if (rc < 0) {
         LOG_ERROR("Failed to dump frame\n");
+        if (!time_fp_is_stderr) fclose(time_fp);
         return rc;
     }
+    
+    long long sum_time = memory_dump_time + global_dump_time +
+                              program_counter_dump_time + stack_dump_time;
+    fprintf(time_fp, "total dump time, %lldns\n", (long long)sum_time);
+    
     fd_cache_dump();
     rc = wasm_dump_socket();
     if (rc < 0) {
         LOG_ERROR("Failed to dump socket\n");
+        if (!time_fp_is_stderr) fclose(time_fp);
         return rc;
     }
 
     LOG_VERBOSE("Success to dump img for wamr\n");
+    if (!time_fp_is_stderr) fclose(time_fp);
     return 0;
 }
 
