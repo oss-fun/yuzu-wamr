@@ -322,7 +322,7 @@ _dump_stack(WASMExecEnv *exec_env, struct WASMInterpFrame *frame, FILE *fp, bool
     clock_gettime(CLOCK_MONOTONIC, &ts3);
     long long collect_time = get_time(ts1, ts2);
     long long write_time = get_time(ts2, ts3);
-    fprintf(time_fp, "stack_%d, %lldns, %llns\n", stack_id, (long long)collect_time, (long long)write_time);
+    fprintf(time_fp, "stack_%d, %lldns, %lldns\n", stack_id, (long long)collect_time, (long long)write_time);
 #endif
 
 }
@@ -631,7 +631,7 @@ int wasm_dump_program_counter(
     clock_gettime(CLOCK_MONOTONIC, &ts3);
     long long pc_dump_time = get_time(ts1, ts2);
     long long fileio_time = get_time(ts2, ts3);
-    fprintf(time_fp, "program counter, %lldns, %llns\n", (long long)pc_dump_time, (long long)fileio_time);
+    fprintf(time_fp, "program counter, %lldns, %lldns\n", (long long)pc_dump_time, (long long)fileio_time);
 #endif
     return 0;
 }
