@@ -11,6 +11,7 @@
 
 #include "fd_cache.h"
 
+#define RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO 1
 #define BH_PLATFORM_LINUX 0
 #if WASM_ENABLE_FAST_INTERP == 0
 
@@ -447,7 +448,18 @@ int wasm_dump_memory(WASMMemoryInstance *memory) {
     return 0;
 }
 
-int wasm_dump_global(WASMModuleInstance *module, WASMGlobalInstance *globals, uint8* global_data) {
+int wasm_dump_global(
+    WASMModuleInstance *module, 
+    WASMGlobalInstance *globals, 
+    uint8* global_data
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO != 0
+    FILE *time_fp
+#endif
+) {
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO != 0
+    struct timespec ts1, ts2, ts3;
+    clock_gettime(CLOCK_MONOTONIC, &ts1);
+#endif
     FILE *fp;
     const char *file = "global.img";
     fp = open_image(file, "wb");
@@ -455,37 +467,75 @@ int wasm_dump_global(WASMModuleInstance *module, WASMGlobalInstance *globals, ui
         fprintf(stderr, "failed to open %s\n", file);
         return -1;
     }
+    
+    // alloc buffer
+    uint8 buf[1024];
+    uint8 *p = buf;
+    const int count = module->e->global_count;
 
     // WASMMemoryInstance *memory = module->default_memory;
     uint8 *global_addr;
     for (int i = 0; i < module->e->global_count; i++) {
+        global_addr = get_global_addr_for_migration(global_data, (globals+i));
+        size_t sz = 0;
         switch (globals[i].type) {
             case VALUE_TYPE_I32:
             case VALUE_TYPE_F32:
-                global_addr = get_global_addr_for_migration(global_data, (globals+i));
-                fwrite(global_addr, sizeof(uint32), 1, fp);
+                sz = sizeof(uint32);
+                // fwrite(global_addr, sizeof(uint32), 1, fp);
                 break;
             case VALUE_TYPE_I64:
             case VALUE_TYPE_F64:
-                global_addr = get_global_addr_for_migration(global_data, (globals+i));
-                fwrite(global_addr, sizeof(uint64), 1, fp);
+                sz = sizeof(uint64);
+                // fwrite(global_addr, sizeof(uint64), 1, fp);
                 break;
             default:
                 printf("type error:B\n");
                 break;
         }
+        /* ---- バッファオーバーフロー防止 ---- */
+        if ((p - buf) + sz > sizeof(buf)) {
+            fprintf(stderr, "global dump buffer overflow (need bigger stack buffer)\n");
+            fclose(fp);
+            return -1;
+        }
+        memcpy(p, global_addr, sz);
+        p += sz;
     }
 
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO != 0
+    clock_gettime(CLOCK_MONOTONIC, &ts2);
+#endif
+
+    /* ---- 一括 fwrite ---- */
+    size_t total = p - buf;
+    fwrite(buf, 1, total, fp);
+
     fclose(fp);
+
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO != 0
+    clock_gettime(CLOCK_MONOTONIC, &ts3);
+    long long pc_dump_time = get_time(ts1, ts2);
+    long long fileio_time = get_time(ts2, ts3);
+    fprintf(time_fp, "program counter, %lldns, %llns\n", (long long)pc_dump_time, (long long)fileio_time);
+#endif
     return 0;
 }
 
 int wasm_dump_program_counter(
     WASMModuleInstance *module,
     WASMFunctionInstance *func,
-    uint8 *frame_ip
+    uint8 *frame_ip,
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO != 0
+    FILE *time_fp
+#endif
 )
 {
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO != 0
+    struct timespec ts1, ts2, ts3;
+    clock_gettime(CLOCK_MONOTONIC, &ts1);
+#endif
+
     FILE *fp;
     const char *file = "program_counter.img";
     fp = open_image(file, "wb");
@@ -498,9 +548,19 @@ int wasm_dump_program_counter(
     fidx = func - module->e->functions;
     p_offset = frame_ip - wasm_get_func_code(func);
 
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO != 0
+    clock_gettime(CLOCK_MONOTONIC, &ts2);
+#endif
+
     dump_value(&fidx, sizeof(uint32), 1, fp);
     dump_value(&p_offset, sizeof(uint32), 1, fp);
 
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO != 0
+    clock_gettime(CLOCK_MONOTONIC, &ts3);
+    long long pc_dump_time = get_time(ts1, ts2);
+    long long fileio_time = get_time(ts2, ts3);
+    fprintf(time_fp, "program counter, %lldns, %llns\n", (long long)pc_dump_time, (long long)fileio_time);
+#endif
     return 0;
 }
 
@@ -633,11 +693,15 @@ int wasm_dump(WASMExecEnv *exec_env,
     }
 
     // dump globals
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO == 0
     clock_gettime(CLOCK_MONOTONIC, &ts1);
+#endif
     rc = wasm_dump_global(module, globals, global_data);
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO == 0
     clock_gettime(CLOCK_MONOTONIC, &ts2);
     long long global_dump_time = get_time(ts1, ts2);
     fprintf(time_fp, "global, %lldns\n", (long long)global_dump_time);
+#endif
     if (rc < 0) {
         LOG_ERROR("Failed to dump globals\n");
         if (!time_fp_is_stderr) fclose(time_fp);
@@ -645,11 +709,15 @@ int wasm_dump(WASMExecEnv *exec_env,
     }
 
     // dump program counter
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO == 0
     clock_gettime(CLOCK_MONOTONIC, &ts1);
-    rc = wasm_dump_program_counter(module, cur_func, frame_ip);
+#endif
+    rc = wasm_dump_program_counter(module, cur_func, frame_ip, time_fp);
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO == 0
     clock_gettime(CLOCK_MONOTONIC, &ts2);
     long long program_counter_dump_time = get_time(ts1, ts2);
     fprintf(time_fp, "program counter, %lldns\n", (long long)program_counter_dump_time);
+#endif
     if (rc < 0) {
         LOG_ERROR("Failed to dump program_counter\n");
         if (!time_fp_is_stderr) fclose(time_fp);
