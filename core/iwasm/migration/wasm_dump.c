@@ -234,28 +234,28 @@ uint8* get_type_stack(uint32 fidx, uint32 offset, uint32* type_stack_size, bool 
 
 /* wasm_dump */
 static void
-_dump_stack(WASMExecEnv *exec_env, struct WASMInterpFrame *frame, FILE *fp, bool is_top)
+_dump_stack(WASMExecEnv *exec_env, struct WASMInterpFrame *frame, FILE *fp, bool is_top, int stack_id, FILE *time_fp)
 {
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO != 0
+    struct timespec ts1, ts2, ts3;
+    clock_gettime(CLOCK_MONOTONIC, &ts1);
+#endif
     int i;
     WASMModuleInstance *module = exec_env->module_inst;
 
     // Entry function
     // wasm_dump_stackの方でdump
+    uint32 entry_fidx = frame->function - module->e->functions;
 
     // リターンアドレス
     // NOTE: 1番下のframeのときだけ、prev_frameではなくframeのリターンアドレスを出力する
     WASMInterpFrame* prev_frame = (frame->prev_frame->function ? frame->prev_frame : frame);
     uint32 fidx = prev_frame->function - module->e->functions;
     uint32 offset = prev_frame->ip - wasm_get_func_code(prev_frame->function);
-    fwrite(&fidx, sizeof(uint32), 1, fp);
-    fwrite(&offset, sizeof(uint32), 1, fp);
 
     // 型スタックのサイズ
     WASMFunctionInstance *func = frame->function;
     uint32 locals = func->param_count + func->local_count;
-    // uint32 type_stack_size = (frame->tsp - frame->tsp_bottom);
-    // uint32 full_type_stack_size = type_stack_size + locals;
-    // fwrite(&full_type_stack_size, sizeof(uint32), 1, fp);
 
     // 型スタックの中身
     uint32 type_stack_size_from_file;
@@ -263,52 +263,73 @@ _dump_stack(WASMExecEnv *exec_env, struct WASMInterpFrame *frame, FILE *fp, bool
     uint32 offset_now = frame->ip - wasm_get_func_code(frame->function);
     // printf("[DEBUG]now addr: (%d, %d)\n", fidx_now, offset_now);
     uint8* type_stack_from_file = get_type_stack(fidx_now, offset_now, &type_stack_size_from_file, !is_top);
-    fwrite(&type_stack_size_from_file, sizeof(uint32), 1, fp);
-    fwrite(type_stack_from_file, sizeof(uint8), type_stack_size_from_file, fp);
-    free(type_stack_from_file);
+
 
     // 値スタックの中身
     uint32 local_cell_num = func->param_cell_num + func->local_cell_num;
     uint32 value_stack_size = frame->sp - frame->sp_bottom;
-    fwrite(frame->lp, sizeof(uint32), local_cell_num, fp);
-    fwrite(frame->sp_bottom, sizeof(uint32), value_stack_size, fp);
 
     // ラベルスタックのサイズ
     uint32 ctrl_stack_size = frame->csp - frame->csp_bottom;
-    fwrite(&ctrl_stack_size, sizeof(uint32), 1, fp);
+
 
     // ラベルスタックの中身
     WASMBranchBlock *csp = frame->csp_bottom;
-    uint32 addr;
+    uint32 begin_addr[ctrl_stack_size], target_addr[ctrl_stack_size], frame_sp[ctrl_stack_size], cell_num[ctrl_stack_size];
     uint8* ip_start = wasm_get_func_code(frame->function);
     for (i = 0; i < ctrl_stack_size; ++i, ++csp) {
         // uint8 *begin_addr;
-        addr = get_addr_offset(csp->begin_addr, ip_start);
-        fwrite(&addr, sizeof(uint32), 1, fp);
+        begin_addr[i] = get_addr_offset(csp->begin_addr, ip_start);
 
         // uint8 *target_addr;
-        addr = get_addr_offset(csp->target_addr, ip_start);
-        fwrite(&addr, sizeof(uint32), 1, fp);
+        target_addr[i] = get_addr_offset(csp->target_addr, ip_start);
 
         // uint32 *frame_sp;
-        addr = get_addr_offset(csp->frame_sp, frame->sp_bottom);
-        fwrite(&addr, sizeof(uint32), 1, fp);
-
-        // uint32 *frame_tsp;
-        // addr = get_addr_offset(csp->frame_tsp, frame->tsp_bottom);
-        // fwrite(&addr, sizeof(uint32), 1, fp);
+        frame_sp[i] = get_addr_offset(csp->frame_sp, frame->sp_bottom);
         
         // uint32 cell_num;
-        fwrite(&csp->cell_num, sizeof(uint32), 1, fp);
+        cell_num[i] = csp->cell_num;
 
-        // uint32 count;
-        // fwrite(&csp->count, sizeof(uint32), 1, fp);
     }
+
+
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO != 0
+    clock_gettime(CLOCK_MONOTONIC, &ts2);
+#endif
+    // write to file
+    fwrite(&entry_fidx, sizeof(uint32), 1, fp);
+    fwrite(&fidx, sizeof(uint32), 1, fp);
+    fwrite(&offset, sizeof(uint32), 1, fp);
+    fwrite(&type_stack_size_from_file, sizeof(uint32), 1, fp);
+    fwrite(type_stack_from_file, sizeof(uint8), type_stack_size_from_file, fp);
+    fwrite(frame->lp, sizeof(uint32), local_cell_num, fp);
+    fwrite(frame->sp_bottom, sizeof(uint32), value_stack_size, fp);
+    fwrite(&ctrl_stack_size, sizeof(uint32), 1, fp);
+
+    for (i = 0; i < ctrl_stack_size; ++i) {
+        fwrite(&begin_addr, sizeof(uint32), 1, fp);
+        fwrite(&target_addr, sizeof(uint32), 1, fp);
+        fwrite(&frame_sp, sizeof(uint32), 1, fp);
+        fwrite(&cell_num, sizeof(uint32), 1, fp);
+    }
+    free(type_stack_from_file);
+
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO != 0
+    clock_gettime(CLOCK_MONOTONIC, &ts3);
+#endif
+
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO != 0
+    clock_gettime(CLOCK_MONOTONIC, &ts3);
+    long long collect_time = get_time(ts1, ts2);
+    long long write_time = get_time(ts2, ts3);
+    fprintf(time_fp, "stack_%d, %lldns, %llns\n", stack_id, (long long)collect_time, (long long)write_time);
+#endif
+
 }
 
 
 int
-wasm_dump_stack(WASMExecEnv *exec_env, struct WASMInterpFrame *frame)
+wasm_dump_stack(WASMExecEnv *exec_env, struct WASMInterpFrame *frame, FILE *time_fp)
 {
     WASMModuleInstance *module =
         (WASMModuleInstance *)exec_env->module_inst;
@@ -324,10 +345,7 @@ wasm_dump_stack(WASMExecEnv *exec_env, struct WASMInterpFrame *frame)
         sprintf(file, "stack%d.img", i);
         FILE *fp = open_image(file, "wb");
 
-        uint32 entry_fidx = frame->function - module->e->functions;
-        fwrite(&entry_fidx, sizeof(uint32), 1, fp);
-
-        _dump_stack(exec_env, frame, fp, (i==1));
+        _dump_stack(exec_env, frame, fp, (i==1), i, time_fp);
         fclose(fp);
     } while((frame = frame->prev_frame));
 
@@ -465,12 +483,25 @@ int write_dirty_memory_buffer(const uint8 *buf, size_t size) {
 
 /* Backwards-compatible wrapper: collect and write dirty memory then free buffer. */
 int dump_dirty_memory(WASMMemoryInstance *memory, FILE *time_fp) {
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO != 0
+    struct timespec ts1, ts2, ts3;
+    clock_gettime(CLOCK_MONOTONIC, &ts1);
+#endif
     uint8 *buf = NULL;
     size_t size = 0;
     int rc = collect_dirty_memory(memory, &buf, &size);
     if (rc != 0) return rc;
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO != 0
+    clock_gettime(CLOCK_MONOTONIC, &ts2);
+#endif
     rc = write_dirty_memory_buffer(buf, size);
     free(buf);
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO != 0
+    clock_gettime(CLOCK_MONOTONIC, &ts3);
+    long long collect_time = get_time(ts1, ts2);
+    long long write_time = get_time(ts2, ts3);
+    fprintf(time_fp, "memory, %lldns, %lldns\n", (long long)collect_time, (long long)write_time);
+#endif
     return rc;
 }
 
@@ -558,9 +589,9 @@ int wasm_dump_global(
 
 #if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO != 0
     clock_gettime(CLOCK_MONOTONIC, &ts3);
-    long long pc_dump_time = get_time(ts1, ts2);
-    long long fileio_time = get_time(ts2, ts3);
-    fprintf(time_fp, "program counter, %lldns, %llns\n", (long long)pc_dump_time, (long long)fileio_time);
+    long long collect_time = get_time(ts1, ts2);
+    long long write_time = get_time(ts2, ts3);
+    fprintf(time_fp, "global, %lldns, %lldns\n", (long long)collect_time, (long long)write_time);
 #endif
     return 0;
 }
@@ -714,7 +745,7 @@ int wasm_dump(WASMExecEnv *exec_env,
     int rc;
     struct timespec ts1, ts2;
     /* write timing results to a file instead of stderr */
-    FILE *time_fp = open_image("dump_time.log", "a");
+    FILE *time_fp = open_image("dump_time.log", "w");
     bool time_fp_is_stderr = false;
     if (time_fp == NULL) {
         /* fallback to stderr if we can't open the file */
@@ -722,16 +753,21 @@ int wasm_dump(WASMExecEnv *exec_env,
         time_fp_is_stderr = true;
     }
     // dump linear memory
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO == 0
     clock_gettime(CLOCK_MONOTONIC, &ts1);
+#endif
     rc = wasm_dump_memory(memory, time_fp);
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO == 0
     clock_gettime(CLOCK_MONOTONIC, &ts2);
     long long memory_dump_time = get_time(ts1, ts2);
     fprintf(time_fp, "memory, %lldns\n", (long long)memory_dump_time);
+#endif
     if (rc < 0) {
         LOG_ERROR("Failed to dump linear memory\n");
         if (!time_fp_is_stderr) fclose(time_fp);
         return rc;
     }
+    printf("Success to dump linear memory\n");
 
     // dump globals
 #if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO == 0
@@ -748,6 +784,7 @@ int wasm_dump(WASMExecEnv *exec_env,
         if (!time_fp_is_stderr) fclose(time_fp);
         return rc;
     }
+    printf("Success to dump globals\n");
 
     // dump program counter
 #if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO == 0
@@ -764,18 +801,24 @@ int wasm_dump(WASMExecEnv *exec_env,
         if (!time_fp_is_stderr) fclose(time_fp);
         return rc;
     }
+    printf("Success to dump program counter\n");
 
     // dump stack
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO == 0
     clock_gettime(CLOCK_MONOTONIC, &ts1);
-    rc = wasm_dump_stack(exec_env, frame);
+#endif
+    rc = wasm_dump_stack(exec_env, frame, time_fp);
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO == 0
     clock_gettime(CLOCK_MONOTONIC, &ts2);
     long long stack_dump_time = get_time(ts1, ts2);
     fprintf(time_fp, "stack, %lldns\n", (long long)stack_dump_time);
+#endif
     if (rc < 0) {
         LOG_ERROR("Failed to dump frame\n");
         if (!time_fp_is_stderr) fclose(time_fp);
         return rc;
     }
+    printf("Success to dump stack\n");
     
 #if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO == 0
     long long sum_time = memory_dump_time + global_dump_time +
