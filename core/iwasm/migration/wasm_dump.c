@@ -398,41 +398,86 @@ int check_soft_dirty(int fd, uint8* addr) {
 #endif
 }
 
-int dump_dirty_memory(WASMMemoryInstance *memory) {
+/*
+ * Collect dirty pages into an allocated buffer.
+ * The buffer layout is a sequence of records: [uint32 offset][PAGE_SIZE bytes of page]...
+ * The caller is responsible for freeing *out_buf when finished.
+ */
+int collect_dirty_memory(WASMMemoryInstance *memory, uint8 **out_buf, size_t *out_size) {
     const int PAGE_SIZE = 4096;
-    FILE *memory_fp = open_image("memory.img", "wb");
-    uint64 pagemap_entry;
+    if (!memory || !out_buf || !out_size) return -1;
+
+    /* Worst-case estimate: every page is dirty */
+    size_t max_pages = memory->cur_page_count;
+    size_t estimate = max_pages * (PAGE_SIZE + sizeof(uint32));
+    uint8 *buf = malloc(estimate);
+    if (!buf) return -1;
+
+    uint8 *p = buf;
+    uint8* memory_data = memory->memory_data;
+    uint8* memory_data_end = memory->memory_data_end;
 
 #if BH_PLATFORM_LINUX == 1
     int fd = get_pagemap(memory->memory_data);
 #else
-    // check_soft_dirtyでfdを使っているのでダミー用. 
-    // もっといい実装がありそう
-    int fd = 0;
+    int fd = 0; /* dummy for non-linux platforms */
 #endif
 
-    uint8* memory_data = memory->memory_data;
-    uint8* memory_data_end = memory->memory_data_end;
-    int i = 0;
-    for (uint8* addr = memory->memory_data; addr < memory_data_end; addr += PAGE_SIZE, ++i) {
+    for (uint8* addr = memory->memory_data; addr < memory_data_end; addr += PAGE_SIZE) {
         if (check_soft_dirty(fd, addr)) {
             uint32 offset = (uint64)addr - (uint64)memory_data;
-            fwrite(&offset, sizeof(uint32), 1, memory_fp);
-            fwrite(addr, PAGE_SIZE, 1, memory_fp);
+            /* ensure we don't overflow estimate (shouldn't happen) */
+            size_t need = sizeof(uint32) + PAGE_SIZE;
+            if ((size_t)(p - buf) + need > estimate) {
+                /* resize buffer */
+                size_t used = p - buf;
+                estimate = estimate + need + (PAGE_SIZE + sizeof(uint32)) * 8;
+                uint8 *newbuf = realloc(buf, estimate);
+                if (!newbuf) { free(buf); return -1; }
+                buf = newbuf;
+                p = buf + used;
+            }
+            memcpy(p, &offset, sizeof(uint32));
+            p += sizeof(uint32);
+            memcpy(p, addr, PAGE_SIZE);
+            p += PAGE_SIZE;
         }
     }
 
 #if BH_PLATFORM_LINUX == 1
     close(fd);
 #endif
-    fclose(memory_fp);
+
+    *out_size = p - buf;
+    *out_buf = buf;
     return 0;
 }
 
-int wasm_dump_memory(WASMMemoryInstance *memory) {
+/* Write a collected dirty-memory buffer to the image file. */
+int write_dirty_memory_buffer(const uint8 *buf, size_t size) {
+    if (!buf) return -1;
+    FILE *memory_fp = open_image("memory.img", "wb");
+    if (!memory_fp) return -1;
+    size_t wrote = fwrite(buf, 1, size, memory_fp);
+    fclose(memory_fp);
+    return (wrote == size) ? 0 : -1;
+}
+
+/* Backwards-compatible wrapper: collect and write dirty memory then free buffer. */
+int dump_dirty_memory(WASMMemoryInstance *memory, FILE *time_fp) {
+    uint8 *buf = NULL;
+    size_t size = 0;
+    int rc = collect_dirty_memory(memory, &buf, &size);
+    if (rc != 0) return rc;
+    rc = write_dirty_memory_buffer(buf, size);
+    free(buf);
+    return rc;
+}
+
+int wasm_dump_memory(WASMMemoryInstance *memory, FILE *time_fp) {
     FILE *mem_size_fp = open_image("mem_page_count.img", "wb");
 
-    dump_dirty_memory(memory);
+    dump_dirty_memory(memory, time_fp);
 
 
     printf("page_count: %d\n", memory->cur_page_count);
@@ -451,10 +496,8 @@ int wasm_dump_memory(WASMMemoryInstance *memory) {
 int wasm_dump_global(
     WASMModuleInstance *module, 
     WASMGlobalInstance *globals, 
-    uint8* global_data
-#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO != 0
+    uint8* global_data,
     FILE *time_fp
-#endif
 ) {
 #if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO != 0
     struct timespec ts1, ts2, ts3;
@@ -526,9 +569,7 @@ int wasm_dump_program_counter(
     WASMModuleInstance *module,
     WASMFunctionInstance *func,
     uint8 *frame_ip,
-#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO != 0
     FILE *time_fp
-#endif
 )
 {
 #if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO != 0
@@ -682,7 +723,7 @@ int wasm_dump(WASMExecEnv *exec_env,
     }
     // dump linear memory
     clock_gettime(CLOCK_MONOTONIC, &ts1);
-    rc = wasm_dump_memory(memory);
+    rc = wasm_dump_memory(memory, time_fp);
     clock_gettime(CLOCK_MONOTONIC, &ts2);
     long long memory_dump_time = get_time(ts1, ts2);
     fprintf(time_fp, "memory, %lldns\n", (long long)memory_dump_time);
@@ -696,7 +737,7 @@ int wasm_dump(WASMExecEnv *exec_env,
 #if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO == 0
     clock_gettime(CLOCK_MONOTONIC, &ts1);
 #endif
-    rc = wasm_dump_global(module, globals, global_data);
+    rc = wasm_dump_global(module, globals, global_data, time_fp);
 #if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO == 0
     clock_gettime(CLOCK_MONOTONIC, &ts2);
     long long global_dump_time = get_time(ts1, ts2);
@@ -736,9 +777,11 @@ int wasm_dump(WASMExecEnv *exec_env,
         return rc;
     }
     
+#if RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO == 0
     long long sum_time = memory_dump_time + global_dump_time +
                               program_counter_dump_time + stack_dump_time;
     fprintf(time_fp, "total dump time, %lldns\n", (long long)sum_time);
+#endif
     
     fd_cache_dump();
     rc = wasm_dump_socket();
