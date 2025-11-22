@@ -307,10 +307,10 @@ _dump_stack(WASMExecEnv *exec_env, struct WASMInterpFrame *frame, FILE *fp, bool
     fwrite(&ctrl_stack_size, sizeof(uint32), 1, fp);
 
     for (i = 0; i < ctrl_stack_size; ++i) {
-        fwrite(&begin_addr, sizeof(uint32), 1, fp);
-        fwrite(&target_addr, sizeof(uint32), 1, fp);
-        fwrite(&frame_sp, sizeof(uint32), 1, fp);
-        fwrite(&cell_num, sizeof(uint32), 1, fp);
+        fwrite(&begin_addr[i], sizeof(uint32), 1, fp);
+        fwrite(&target_addr[i], sizeof(uint32), 1, fp);
+        fwrite(&frame_sp[i], sizeof(uint32), 1, fp);
+        fwrite(&cell_num[i], sizeof(uint32), 1, fp);
     }
     free(type_stack_from_file);
 
