@@ -428,11 +428,23 @@ int check_soft_dirty(int fd, uint8* addr) {
 
 /* Return 1 if the PAGE at addr is entirely zero, 0 otherwise. */
 static int
-is_zero_page(const uint8 *addr, int page_size)
+is_zero_page(const uint8_t *addr, int page_size)
 {
-    for (int i = 0; i < page_size; ++i) {
-        if (addr[i] != 0) return 0;
+    const uint64_t *p64 = (const uint64_t*)addr;
+    int n64 = page_size / sizeof(uint64_t);
+
+    for (int i = 0; i < n64; ++i) {
+        if (p64[i] != 0)
+            return 0;
     }
+
+    // 余りのバイトをチェック
+    const uint8_t *p8 = addr + n64 * sizeof(uint64_t);
+    for (int i = 0; i < (page_size % sizeof(uint64_t)); ++i) {
+        if (p8[i] != 0)
+            return 0;
+    }
+
     return 1;
 }
 
