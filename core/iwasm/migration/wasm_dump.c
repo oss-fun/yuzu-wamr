@@ -12,7 +12,7 @@
 #include "fd_cache.h"
 
 #define RECORD_DUMPTIME_SEPARATELY_FOR_DUMPIO 1
-#define BH_PLATFORM_LINUX 0
+#define BH_PLATFORM_LINUX 1
 #if WASM_ENABLE_FAST_INTERP == 0
 
 #define IMAGE_DIR_MAX 128
@@ -413,14 +413,33 @@ int check_soft_dirty(int fd, uint8* addr) {
 #else
     // linux以外は確定で1を返す
     return 1;
+//  * The buffer layout is a sequence of records. Two record types are supported:
+//  *  - DIRTY page record:
+//  *      [uint8 type = 1][uint32 offset][PAGE_SIZE bytes of page]
+//  *  - ZERO-RUN record (represents N consecutive zero pages):
+//  *      [uint8 type = 2][uint32 start_offset][uint32 run_pages]
+//  *
+//  * Notes:
+//  *  - Offsets are byte offsets from the start of `memory->memory_data`.
+//  *  - Caller is responsible for freeing *out_buf when finished.
 #endif
+}
+
+
+/* Return 1 if the PAGE at addr is entirely zero, 0 otherwise. */
+static int
+is_zero_page(const uint8 *addr, int page_size)
+{
+    for (int i = 0; i < page_size; ++i) {
+        if (addr[i] != 0) return 0;
+    }
+    return 1;
 }
 
 /*
  * Collect dirty pages into an allocated buffer.
  * The buffer layout is a sequence of records: [uint32 offset][PAGE_SIZE bytes of page]...
- * The caller is responsible for freeing *out_buf when finished.
- */
+ * The caller is responsible for freeing *out_buf when finished. */
 int collect_dirty_memory(WASMMemoryInstance *memory, uint8 **out_buf, size_t *out_size) {
     const int PAGE_SIZE = 4096;
     if (!memory || !out_buf || !out_size) return -1;
@@ -441,11 +460,54 @@ int collect_dirty_memory(WASMMemoryInstance *memory, uint8 **out_buf, size_t *ou
     int fd = 0; /* dummy for non-linux platforms */
 #endif
 
+    /* We will coalesce consecutive zero pages into ZERO-RUN records.
+     * For each page:
+     *  - If page is all-zero, extend current zero-run.
+     *  - If page is non-zero and dirty -> emit a DIRTY record.
+     *  - If encountering a non-zero page after a zero-run -> flush ZERO-RUN record.
+     */
+    uint32 zero_run_start = 0;
+    uint32 zero_run_count = 0;
+
     for (uint8* addr = memory->memory_data; addr < memory_data_end; addr += PAGE_SIZE) {
+        /* check whether page is all zero */
+        int is_zero = is_zero_page(addr, PAGE_SIZE);
+
+        if (is_zero) {
+            /* start or extend zero run */
+            if (zero_run_count == 0) {
+                zero_run_start = (uint32)((uint64)addr - (uint64)memory_data);
+            }
+            zero_run_count++;
+            /* do not emit page bytes for zero pages */
+            continue;
+        }
+
+        /* non-zero page: if we have a pending zero run, flush it */
+        if (zero_run_count > 0) {
+            /* emit ZERO-RUN record: [uint8 type=2][uint32 start_offset][uint32 run_pages] */
+            size_t need = 1 + sizeof(uint32) + sizeof(uint32);
+            if ((size_t)(p - buf) + need > estimate) {
+                size_t used = p - buf;
+                estimate = estimate + need + (PAGE_SIZE + sizeof(uint32) + 8) * 8;
+                uint8 *newbuf = realloc(buf, estimate);
+                if (!newbuf) { free(buf); return -1; }
+                buf = newbuf;
+                p = buf + used;
+            }
+            uint8 type = 2;
+            memcpy(p, &type, 1); p += 1;
+            memcpy(p, &zero_run_start, sizeof(uint32)); p += sizeof(uint32);
+            memcpy(p, &zero_run_count, sizeof(uint32)); p += sizeof(uint32);
+            zero_run_count = 0;
+            zero_run_start = 0;
+        }
+
+        /* only include non-zero pages if they are soft-dirty */
         if (check_soft_dirty(fd, addr)) {
             uint32 offset = (uint64)addr - (uint64)memory_data;
             /* ensure we don't overflow estimate (shouldn't happen) */
-            size_t need = sizeof(uint32) + PAGE_SIZE;
+            size_t need = 1 + sizeof(uint32) + PAGE_SIZE; /* type + offset + page */
             if ((size_t)(p - buf) + need > estimate) {
                 /* resize buffer */
                 size_t used = p - buf;
@@ -455,11 +517,30 @@ int collect_dirty_memory(WASMMemoryInstance *memory, uint8 **out_buf, size_t *ou
                 buf = newbuf;
                 p = buf + used;
             }
-            memcpy(p, &offset, sizeof(uint32));
-            p += sizeof(uint32);
-            memcpy(p, addr, PAGE_SIZE);
-            p += PAGE_SIZE;
+            uint8 type = 1;
+            memcpy(p, &type, 1); p += 1;
+            memcpy(p, &offset, sizeof(uint32)); p += sizeof(uint32);
+            memcpy(p, addr, PAGE_SIZE); p += PAGE_SIZE;
         }
+        /* if not dirty, skip emitting the non-zero clean page (no-op) */
+    }
+
+    /* flush any trailing zero run */
+    if (zero_run_count > 0) {
+        size_t need = 1 + sizeof(uint32) + sizeof(uint32);
+        if ((size_t)(p - buf) + need > estimate) {
+            size_t used = p - buf;
+            estimate = estimate + need + (PAGE_SIZE + sizeof(uint32) + 8) * 8;
+            uint8 *newbuf = realloc(buf, estimate);
+            if (!newbuf) { free(buf); return -1; }
+            buf = newbuf;
+            p = buf + used;
+        }
+        uint8 type = 2;
+        memcpy(p, &type, 1); p += 1;
+        memcpy(p, &zero_run_start, sizeof(uint32)); p += sizeof(uint32);
+        memcpy(p, &zero_run_count, sizeof(uint32)); p += sizeof(uint32);
+        zero_run_count = 0;
     }
 
 #if BH_PLATFORM_LINUX == 1
