@@ -4,12 +4,18 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
+#include <dirent.h>
+#include <unistd.h>
+#include <limits.h>
+#include <string.h>
+
 #include "../interpreter/wasm_runtime.h"
+#include "../libraries/libc-wasi/sandboxed-system-primitives/src/posix.h"
 #include "wasm_migration.h"
 #include "wasm_dump.h"
 #include "wasm_dispatch.h"
 
-#include "fd_cache.h"
+//#include "fd_cache.h"
 
 #define BH_PLATFORM_LINUX 0
 #if WASM_ENABLE_FAST_INTERP == 0
@@ -504,7 +510,92 @@ int wasm_dump_program_counter(
     return 0;
 }
 
-int wasm_dump_socket(){
+uint64_t generate_id() {
+    static uint64_t counter = 0;
+    uint64_t c = __atomic_fetch_add(&counter, 1, __ATOMIC_RELAXED);
+    return ((uint64_t)getpid() << 32) | c;
+}
+
+// 制御コマンドと一意IDを持つペイロード
+struct Payload {
+    // cmd 送信：'S', 要求：'R', 終了：'E'
+    uint8_t cmd;
+    // IPCのため8byteアライメントを保証する7byteパディング
+    uint8_t pad[7];
+    uint64_t id;
+};
+
+// msg_controlに入れるバッファ
+typedef union {
+    char buf[CMSG_SPACE(sizeof(int))];
+    struct cmsghdr align;
+} FdCmsgBuf;
+
+// FD要求、終了制御のためのmsg作成
+static void setUpMsg(
+    struct msghdr *msg,
+    struct iovec *io,
+    struct Payload *p
+) {
+    // iovecにペイロードを詰める
+    io->iov_base = p;
+    io->iov_len = sizeof(*p);
+    // msgにペイロードを詰めたiovecを渡す
+    msg->msg_iov = io;
+    msg->msg_iovlen = 1;
+    msg->msg_control = NULL;
+    msg->msg_controllen = 0;
+}
+
+// FDを渡すときのcmsg作成
+static bool setUpCmsg(
+    struct msghdr *msg,
+    struct iovec *io,
+    struct Payload *p,
+    int fd,
+    FdCmsgBuf *cbuf
+) {
+    // iovecまで詰めたmsgを作る
+    setUpMsg(msg, io, p);
+    // msgのcontrol部分に補助データを詰める
+    memset(cbuf, 0, sizeof(*cbuf));
+    msg->msg_control = cbuf->buf;
+    msg->msg_controllen = sizeof(cbuf->buf);
+    // FD送信用のcmsgを作成
+    struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
+    if (!cmsg) {
+      return false;
+    }
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(fd));
+    memcpy(CMSG_DATA(cmsg), &fd, sizeof(fd));
+    return true;
+}
+
+int wasm_dump_socket(WASMExecEnv exec_env){
+    // exec_envからWASIのモジュールを取得
+    WASIContext *wasi_cxt = wasm_runtime_get_wasi_ctx(wasm_runtime_get_module_inst(&exec_env));
+    // FDテーブルとその長さを取得
+    struct fd_table *table = wasi_cxt->curfds;
+    uint32_t tablelen = (uint32_t)table->size;
+    // FD送信用のソケットを作成
+    int unix_sock = socket(AF_UNIX, SOCK_SEQPACKET, 0);
+    if (unix_sock < 0 ) {
+        perror("socket");
+        return -1;
+    }
+    // /tmp/fdpass.sockに接続
+    struct sockaddr_un unaddr;
+    memset(&unaddr, 0, sizeof(unaddr));
+    unaddr.sun_family = AF_UNIX;
+    strncpy(unaddr.sun_path, "/tmp/fdpass.sock", sizeof(unaddr.sun_path) - 1);
+    if (connect(unix_sock,  (struct sockaddr*)&unaddr, sizeof(unaddr)) < 0) {
+        perror("connect");
+        close(unix_sock);
+        return -1;
+    }
+    // イメージファイルを開く
     FILE *fp;
     const char *file = "socket_fd.img";
     fp = open_image(file, "wb");
@@ -512,82 +603,61 @@ int wasm_dump_socket(){
         fprintf(stderr, "failed to open %s\n", file);
         return -1;
     }
+    // FDテーブルの要素でループ
+    for (uint32_t i = 0; i < tablelen; i++) {
+        int handler = fd_table_get_handler(table, i);
+        uint32_t op = fd_table_get_op(table, i);
+        // handler(実FD)と生成操作が登録されているものだけ見る
+        if (handler > -1 && op > 0) {
+            uint64_t id = generate_id();
+            //printf("vfd: %u rfd: %d op:%u\n", i, handler, op);
+            // イメージファイルに書き込み
+            fwrite(&i, sizeof(i), 1, fp);
+            fwrite(&id, sizeof(id), 1, fp);
+            fwrite(&op, sizeof(op), 1, fp);
+            // 送信用ペイロード作成
+            struct Payload data;
+            memset(&data, 0, sizeof(data));
+            data.cmd = 'S';
+            data.id = id;
 
-    size_t used = fd_cache_get_used();
+            struct iovec io;
+            struct msghdr msg;
+            memset(&msg, 0, sizeof(msg));
+            FdCmsgBuf cbuf;
 
-    // listen/accept 両方の FD を順番通りに送るために一時配列
-    int fds_to_send[2] = {-1, -1};
+            if (!setUpCmsg(&msg, &io, &data, handler, &cbuf)) {
+                perror("setUpCmsg");
+                fclose(fp);
+                close(unix_sock);
+                return -1;
+            }
+            // sendmsgで送信
+            if (sendmsg(unix_sock, &msg, 0) < 0) {
+                perror("sendmsg");
+                fclose(fp);
+                close(unix_sock);
+                return -1;
+            }
 
-    for (size_t i = 0; i < used; i++) {
-        struct fd_cache_entry *e = fd_cache_get(i);
-
-        __wasi_fd_t wasi_fd = fd_cache_get_wasi_fd(e);
-        int real_fd = fd_cache_get_real_fd(e);
-        int src = fd_cache_get_source(e);
-
-        // バイナリで書き込む
-        fwrite(&wasi_fd, sizeof(wasi_fd), 1, fp);
-        fwrite(&real_fd, sizeof(real_fd), 1, fp);
-        fwrite(&src, sizeof(src), 1, fp);
-
-        if (src == 1) fds_to_send[0] = real_fd; // listen
-        if (src == 2) fds_to_send[1] = real_fd; // accept
+        }
+    }
+    // 送信終了制御
+    struct Payload e_data;
+    memset(&e_data, 0, sizeof(e_data));
+    e_data.cmd = 'E';
+    e_data.id = 0;
+    struct iovec e_io;
+    struct msghdr e_msg;
+    memset(&e_msg, 0, sizeof(e_msg));
+    setUpMsg(&e_msg, &e_io, &e_data);
+    if (sendmsg(unix_sock, &e_msg, 0) < 0) {
+        perror("sendmsg");
+        fclose(fp);
+        close(unix_sock);
+        return -1;
     }
     fclose(fp);
-
-    int unix_sock = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (unix_sock < 0) {
-        perror("socket");
-        exit(1);
-    }
-
-    struct sockaddr_un unaddr;
-    memset(&unaddr, 0, sizeof(unaddr));
-    unaddr.sun_family = AF_UNIX;
-    strncpy(unaddr.sun_path, "/tmp/fdpass.sock", sizeof(unaddr.sun_path) - 1);
-
-    if (connect(unix_sock, (struct sockaddr*)&unaddr, sizeof(unaddr)) < 0) {
-        perror("connect");
-        close(unix_sock);
-        exit(1);
-    }
-
-    // listen -> accept の順で送信
-    for (int i = 0; i < 2; i++) {
-        if (fds_to_send[i] < 0) continue; // FD が無い場合はスキップ
-
-        int fd = fds_to_send[i];
-
-        struct msghdr msg = {0};
-        struct iovec io;
-        char buf[CMSG_SPACE(sizeof(fd))];
-        char data = 'F';
-
-        memset(buf, 0, sizeof(buf));
-
-        io.iov_base = &data;
-        io.iov_len = sizeof(data);
-        msg.msg_iov = &io;
-        msg.msg_iovlen = 1;
-        msg.msg_control = buf;
-        msg.msg_controllen = sizeof(buf);
-
-        struct cmsghdr* cmsg = CMSG_FIRSTHDR(&msg);
-        cmsg->cmsg_level = SOL_SOCKET;
-        cmsg->cmsg_type  = SCM_RIGHTS;
-        cmsg->cmsg_len   = CMSG_LEN(sizeof(fd));
-
-        memcpy(CMSG_DATA(cmsg), &fd, sizeof(fd));
-
-        if (sendmsg(unix_sock, &msg, 0) < 0) {
-            fprintf(stderr, "sendmsg() failed: %s\n", strerror(errno));
-            close(unix_sock);
-            exit(1);
-        }
-
-        printf("FD sent %d (src=%d)\n", fd, i==0 ? 1 : 2);
-    }
-
     close(unix_sock);
     return 0;
 }
@@ -651,8 +721,12 @@ int wasm_dump(WASMExecEnv *exec_env,
         LOG_ERROR("Failed to dump frame\n");
         return rc;
     }
-    fd_cache_dump();
-    rc = wasm_dump_socket();
+
+    // dump socket
+    clock_gettime(CLOCK_MONOTONIC, &ts1);
+    rc = wasm_dump_socket(*exec_env);
+    clock_gettime(CLOCK_MONOTONIC, &ts2);
+    fprintf(stderr, "wasi_fd, %lu\n", get_time(ts1, ts2));
     if (rc < 0) {
         LOG_ERROR("Failed to dump socket\n");
         return rc;

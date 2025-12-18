@@ -130,6 +130,8 @@ os_socket_create(bh_socket_t *sock, bool is_ipv4, bool is_tcp)
     else {
         *sock = socket(af, SOCK_DGRAM, 0);
     }
+    int opt = 1;
+    setsockopt(*sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     return (*sock == -1) ? BHT_ERROR : BHT_OK;
 }

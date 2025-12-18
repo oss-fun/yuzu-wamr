@@ -4,7 +4,8 @@
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 set -eo pipefail
-CC="${CC:=/opt/wasi-sdk/bin/clang}"
+# CC="${CC:=/opt/wasi-sdk/bin/clang}"
+CC="${CC:=/home/yuzu/wasi-sdk-20.0/bin/clang}"
 files=("tcp_udp.c" "nslookup.c")
 
 for file in "${files[@]}"

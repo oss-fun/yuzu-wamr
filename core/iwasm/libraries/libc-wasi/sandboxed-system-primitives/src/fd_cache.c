@@ -3,11 +3,11 @@
 struct fd_cache_entry g_fd_cache[2];
 size_t g_fd_cache_used = 0;
 
-int fd_cache_insert(__wasi_fd_t wasi_fd, int real_fd, fd_source_t source) {
+int fd_cache_insert(__wasi_fd_t wasi_fd, int real_fd, fd_op_t op) {
     for (size_t i = 0; i < g_fd_cache_used; i++) {
         if (g_fd_cache[i].real_fd == real_fd) {
             g_fd_cache[i].wasi_fd = wasi_fd;
-            g_fd_cache[i].source = source;
+            g_fd_cache[i].op = op;
             return 0;
         }
     }
@@ -18,7 +18,7 @@ int fd_cache_insert(__wasi_fd_t wasi_fd, int real_fd, fd_source_t source) {
 
     g_fd_cache[g_fd_cache_used].wasi_fd = wasi_fd;
     g_fd_cache[g_fd_cache_used].real_fd = real_fd;
-    g_fd_cache[g_fd_cache_used].source = source;
+    g_fd_cache[g_fd_cache_used].op = op;
     g_fd_cache_used++;
 
     return 0;
@@ -46,9 +46,9 @@ struct fd_cache_entry* fd_cache_find_by_wasi_fd(__wasi_fd_t wasi_fd) {
     return NULL;
 }
 
-struct fd_cache_entry* fd_cache_find_by_source(fd_source_t source) {
+struct fd_cache_entry* fd_cache_find_by_op(fd_op_t op) {
     for (size_t i = 0; i < g_fd_cache_used; i++) {
-        if (g_fd_cache[i].source == source) {
+        if (g_fd_cache[i].op == op) {
             return &g_fd_cache[i];
         }
     }
@@ -58,11 +58,11 @@ struct fd_cache_entry* fd_cache_find_by_source(fd_source_t source) {
 void fd_cache_dump(void) {
     printf("FD Cache (used %zu/%d):\n", g_fd_cache_used, 2);
     for (size_t i = 0; i < g_fd_cache_used; i++) {
-        printf("  [%zu] wasi_fd=%u, real_fd=%d, source=%d\n",
+        printf("  [%zu] wasi_fd=%u, real_fd=%d, op=%d\n",
                i,
                g_fd_cache[i].wasi_fd,
                g_fd_cache[i].real_fd,
-               g_fd_cache[i].source);
+               g_fd_cache[i].op);
     }
 }
 
@@ -91,6 +91,6 @@ int fd_cache_get_real_fd(struct fd_cache_entry *e) {
     return e->real_fd;
 }
 
-fd_source_t fd_cache_get_source(struct fd_cache_entry *e) {
-    return e->source;
+fd_op_t fd_cache_get_op(struct fd_cache_entry *e) {
+    return e->op;
 }

@@ -3344,9 +3344,9 @@ wasm_runtime_init_wasi(WASMModuleInstanceCommon *module_inst,
         goto fail;
 
     /* Prepopulate curfds with stdin, stdout, and stderr file descriptors. */
-    if (!fd_table_insert_existing(curfds, 0, stdin_file_handle, true)
-        || !fd_table_insert_existing(curfds, 1, stdout_file_handle, true)
-        || !fd_table_insert_existing(curfds, 2, stderr_file_handle, true)) {
+    if (!fd_table_insert_existing(curfds, 0, stdin_file_handle, true, 0)
+        || !fd_table_insert_existing(curfds, 1, stdout_file_handle, true, 0)
+        || !fd_table_insert_existing(curfds, 2, stderr_file_handle, true, 0)) {
         set_error_buf(error_buf, error_buf_size,
                       "Init wasi environment failed: init fd table failed");
         goto fail;
@@ -3373,7 +3373,7 @@ wasm_runtime_init_wasi(WASMModuleInstanceCommon *module_inst,
             goto fail;
         }
 
-        if (!fd_table_insert_existing(curfds, wasm_fd, file_handle, false)) {
+        if (!fd_table_insert_existing(curfds, wasm_fd, file_handle, false, 0)) {
             if (error_buf)
                 snprintf(error_buf, error_buf_size,
                          "error inserting preopen fd %u (directory %s) into fd "
@@ -3444,7 +3444,7 @@ wasm_runtime_init_wasi(WASMModuleInstanceCommon *module_inst,
             goto fail;
         }
 
-        if (!fd_table_insert_existing(curfds, wasm_fd, file_handle, false)
+        if (!fd_table_insert_existing(curfds, wasm_fd, file_handle, false, 0)
             || !fd_prestats_insert(prestats, map_mapped, wasm_fd)) {
             if (error_buf)
                 snprintf(error_buf, error_buf_size,

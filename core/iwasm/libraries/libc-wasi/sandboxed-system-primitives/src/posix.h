@@ -57,11 +57,15 @@ struct addr_pool {
     uint8 mask;
 };
 
+int 
+fd_table_get_handler(struct fd_table *ft, __wasi_fd_t fd);
+int
+fd_table_get_op(struct fd_table *ft, __wasi_fd_t fd);
 bool
 fd_table_init(struct fd_table *);
 bool
 fd_table_insert_existing(struct fd_table *, __wasi_fd_t, os_file_handle,
-                         bool is_stdio);
+                         bool is_stdio, int);
 bool
 fd_prestats_init(struct fd_prestats *);
 bool

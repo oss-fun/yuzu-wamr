@@ -26,7 +26,7 @@
 #include "refcount.h"
 #include "rights.h"
 #include "str.h"
-#include "fd_cache.h"
+//#include "fd_cache.h"
 
 
 /* Some platforms (e.g. Windows) already define `min()` macro.
@@ -341,7 +341,44 @@ struct fd_entry {
     struct fd_object *object;
     __wasi_rights_t rights_base;
     __wasi_rights_t rights_inheriting;
+    int op;
 };
+
+typedef enum {
+    FD_OP_NONE = 0,
+    FD_OP_OPEN,
+    FD_OP_ACCEPT,
+} fd_op_t;
+
+int
+fd_table_get_handler(struct fd_table *ft, __wasi_fd_t fd) {
+    if (!ft) {
+        return -1;
+    }
+    if (fd >= ft->size) {
+        return -1;
+    }
+    struct fd_entry *fe = &ft->entries[fd];
+    if (!fe || !fe->object) {
+        return -1;
+    }
+    return fe->object->file_handle;
+}
+
+int
+fd_table_get_op(struct fd_table *ft, __wasi_fd_t fd) {
+    if (!ft) {
+        return -1;
+    }
+    if (fd >= ft->size) {
+        return -1;
+    }
+    struct fd_entry *fe = &ft->entries[fd];
+    if (!fe) {
+        return -1;
+    }
+    return fe->op;
+}
 
 // Looks up a file descriptor table entry by number and required rights.
 static __wasi_errno_t
@@ -432,7 +469,8 @@ fd_object_new(__wasi_filetype_t type, bool is_stdio, struct fd_object **fo)
 // Attaches a file descriptor to the file descriptor table.
 static void
 fd_table_attach(struct fd_table *ft, __wasi_fd_t fd, struct fd_object *fo,
-                __wasi_rights_t rights_base, __wasi_rights_t rights_inheriting)
+                __wasi_rights_t rights_base, __wasi_rights_t rights_inheriting,
+                int op)
     REQUIRES_EXCLUSIVE(ft->lock) CONSUMES(fo->refcount)
 {
     //printf("[fd_table_attach] attaching fd=%u, ft->size=%zu, ft->used=%zu, current_object=%p, ", fd, ft->size, ft->used, (void*)ft->entries[fd].object);
@@ -444,6 +482,7 @@ fd_table_attach(struct fd_table *ft, __wasi_fd_t fd, struct fd_object *fo,
     fe->object = fo;
     fe->rights_base = rights_base;
     fe->rights_inheriting = rights_inheriting;
+    fe->op = op;
     ++ft->used;
     assert(ft->size >= ft->used * 2 && "File descriptor too full");
 }
@@ -577,7 +616,7 @@ fd_object_release(wasm_exec_env_t env, struct fd_object *fo)
 // table.
 bool
 fd_table_insert_existing(struct fd_table *ft, __wasi_fd_t in,
-                         os_file_handle out, bool is_stdio)
+                         os_file_handle out, bool is_stdio, int op)
 {
     __wasi_filetype_t type = __WASI_FILETYPE_UNKNOWN;
     __wasi_rights_t rights_base = 0, rights_inheriting = 0;
@@ -618,7 +657,7 @@ fd_table_insert_existing(struct fd_table *ft, __wasi_fd_t in,
         return false;
     }
 
-    fd_table_attach(ft, in, fo, rights_base, rights_inheriting);
+    fd_table_attach(ft, in, fo, rights_base, rights_inheriting, op);
     rwlock_unlock(&ft->lock);
     return true;
 }
@@ -683,7 +722,7 @@ fd_table_insert(wasm_exec_env_t exec_env, struct fd_table *ft,
         return error;
     }
 
-    fd_table_attach(ft, *out, fo, rights_base, rights_inheriting);
+    fd_table_attach(ft, *out, fo, rights_base, rights_inheriting, FD_OP_NONE);
     rwlock_unlock(&ft->lock);
 
     return error;
@@ -692,7 +731,8 @@ fd_table_insert(wasm_exec_env_t exec_env, struct fd_table *ft,
 static __wasi_errno_t
 fd_table_insert_preserve(wasm_exec_env_t exec_env, struct fd_table *ft,
                 struct fd_object *fo, __wasi_rights_t rights_base,
-                __wasi_rights_t rights_inheriting, __wasi_fd_t *out)
+                __wasi_rights_t rights_inheriting, __wasi_fd_t *out,
+                int op)
     REQUIRES_UNLOCKED(ft->lock) UNLOCKS(fo->refcount)
 {
     // Grow the file descriptor table if needed.
@@ -710,11 +750,8 @@ fd_table_insert_preserve(wasm_exec_env_t exec_env, struct fd_table *ft,
         return error;
     }
 
-    fd_table_attach(ft, *out, fo, rights_base, rights_inheriting);
+    fd_table_attach(ft, *out, fo, rights_base, rights_inheriting, op);
     rwlock_unlock(&ft->lock);
-
-    //printf("preserved Vfd = %d\n", *out);
-    fd_cache_insert(*out, fo->file_handle, FD_SOURCE_NONE);
     return error;
 }
 
@@ -750,7 +787,8 @@ static __wasi_errno_t
 fd_table_insert_fd_preserve(wasm_exec_env_t exec_env, struct fd_table *ft,
                    os_file_handle in, __wasi_filetype_t type,
                    __wasi_rights_t rights_base,
-                   __wasi_rights_t rights_inheriting, __wasi_fd_t *out)
+                   __wasi_rights_t rights_inheriting, __wasi_fd_t *out,
+                   int op)
     REQUIRES_UNLOCKED(ft->lock)
 {
     struct fd_object *fo;
@@ -770,7 +808,7 @@ fd_table_insert_fd_preserve(wasm_exec_env_t exec_env, struct fd_table *ft,
         fo->directory.handle = os_get_invalid_dir_stream();
     }
     return fd_table_insert_preserve(exec_env, ft, fo, rights_base, rights_inheriting,
-                           out);
+                           out, op);
 }
 
 bool fd_table_restore(struct fd_table *ft) {
@@ -882,7 +920,7 @@ bool fd_table_restore(struct fd_table *ft) {
                (entries[i].src == 1) ? "listen" : "accept",
                received_fd, entries[i].wasi_fd);*/
 
-        if (!fd_table_insert_existing(ft, entries[i].wasi_fd, received_fd, false)) {
+        if (!fd_table_insert_existing(ft, entries[i].wasi_fd, received_fd, false, FD_OP_NONE)) {
             fprintf(stderr, "failed to insert fd (src=%d)\n", entries[i].src);
         }
         fd_cache_insert(entries[i].wasi_fd, received_fd, entries[i].src);
@@ -945,7 +983,7 @@ wasmtime_ssp_fd_prestat_dir_name(struct fd_prestats *prestats, __wasi_fd_t fd,
 __wasi_errno_t
 wasmtime_ssp_fd_close(wasm_exec_env_t exec_env, struct fd_table *curfds,
                       struct fd_prestats *prestats, __wasi_fd_t fd)
-{
+{   printf("fd_close called wasi:%d\n", fd);
     // Validate the file descriptor.
     struct fd_table *ft = curfds;
     rwlock_wrlock(&ft->lock);
@@ -1129,7 +1167,7 @@ wasmtime_ssp_fd_renumber(wasm_exec_env_t exec_env, struct fd_table *curfds,
     fd_table_detach(ft, to, &fo);
     refcount_acquire(&fe_from->object->refcount);
     fd_table_attach(ft, to, fe_from->object, fe_from->rights_base,
-                    fe_from->rights_inheriting);
+                    fe_from->rights_inheriting, FD_OP_NONE);
     fd_object_release(exec_env, fo);
 
     // Remove the old fd from the file descriptor table.
@@ -2531,7 +2569,7 @@ __wasi_errno_t
 wasi_ssp_sock_accept(wasm_exec_env_t exec_env, struct fd_table *curfds,
                      __wasi_fd_t fd, __wasi_fdflags_t flags,
                      __wasi_fd_t *fd_new)
-{
+{   
     __wasi_filetype_t wasi_type;
     __wasi_rights_t max_base, max_inheriting;
     struct fd_object *fo;
@@ -2558,17 +2596,13 @@ wasi_ssp_sock_accept(wasm_exec_env_t exec_env, struct fd_table *curfds,
     }
 
     error = fd_table_insert_fd_preserve(exec_env, curfds, new_sock, wasi_type, max_base,
-                               max_inheriting, fd_new);
+                               max_inheriting, fd_new, FD_OP_ACCEPT);
     if (error != __WASI_ESUCCESS) {
         /* released in fd_table_insert_fd() */
         new_sock = os_get_invalid_handle();
         goto fail;
     }
-
-    struct fd_cache_entry* e = fd_cache_find_by_wasi_fd(*fd_new);
-    if (e) {
-        e->source = FD_SOURCE_ACCEPT;
-    }
+    printf("sock_accept called wasi:%d\n", *fd_new);
 
     return __WASI_ESUCCESS;
 
@@ -2918,14 +2952,9 @@ wasi_ssp_sock_open(wasm_exec_env_t exec_env, struct fd_table *curfds,
 
     // TODO: base rights and inheriting rights ?
     error = fd_table_insert_fd_preserve(exec_env, curfds, sock, wasi_type, max_base,
-                               max_inheriting, sockfd);
+                               max_inheriting, sockfd, FD_OP_OPEN);
     if (error != __WASI_ESUCCESS) {
         return error;
-    }
-
-    struct fd_cache_entry* e = fd_cache_find_by_wasi_fd(*sockfd);
-    if (e) {
-        e->source = FD_SOURCE_OPEN;
     }
 
     return __WASI_ESUCCESS;
