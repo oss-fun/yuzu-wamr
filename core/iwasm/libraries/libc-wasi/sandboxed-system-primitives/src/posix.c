@@ -822,57 +822,34 @@ typedef union {
     char buf[CMSG_SPACE(sizeof(int))];
     struct cmsghdr align;
 } FdCmsgBuf;
-
-// FD要求、終了制御のためのmsg作成
-static void setUpMsg(
-    struct msghdr *msg,
-    struct iovec *io,
-    struct Payload *p
-) {
-    // iovecにペイロードを詰める
-    io->iov_base = p;
-    io->iov_len = sizeof(*p);
-    // msgにペイロードを詰めたiovecを渡す
-    msg->msg_iov = io;
-    msg->msg_iovlen = 1;
-    msg->msg_control = NULL;
-    msg->msg_controllen = 0;
-}
-
-// FDを渡すときのcmsg作成
-static bool setUpCmsg(
-    struct msghdr *msg,
-    struct iovec *io,
-    struct Payload *p,
-    int fd,
-    FdCmsgBuf *cbuf
-) {
-    // iovecまで詰めたmsgを作る
-    setUpMsg(msg, io, p);
-    // msgのcontrol部分に補助データを詰める
-    memset(cbuf, 0, sizeof(*cbuf));
-    msg->msg_control = cbuf->buf;
-    msg->msg_controllen = sizeof(cbuf->buf);
-    // FD送信用のcmsgを作成
-    struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
-    if (!cmsg) {
-      return false;
-    }
-    cmsg->cmsg_level = SOL_SOCKET;
-    cmsg->cmsg_type = SCM_RIGHTS;
-    cmsg->cmsg_len = CMSG_LEN(sizeof(fd));
-    memcpy(CMSG_DATA(cmsg), &fd, sizeof(fd));
-    return true;
-}
+// イメージファイルから読み出す1エントリ
+struct FdEntry {
+    uint32_t wasi_fd;
+    uint64_t id;
+    uint32_t op;
+};
 
 bool fd_table_restore(struct fd_table *ft) {
+    // ロック確認
     if (!rwlock_initialize(&ft->lock)) {
         return false;
     }
-    rwlock_wrlock(&ft->lock);
-    fd_table_grow(ft, 0, 64);
-    rwlock_unlock(&ft->lock);
-
+    // ソケットを作成し/tmp/fdpass.sockに接続
+    int unix_sock = socket(AF_UNIX, SOCK_SEQPACKET, 0);
+    if (unix_sock < 0 ) {
+        perror("socket");
+        return false;
+    }
+    struct sockaddr_un unaddr;
+    memset(&unaddr, 0, sizeof(unaddr));
+    unaddr.sun_family = AF_UNIX;
+    strncpy(unaddr.sun_path, "/tmp/fdpass.sock", sizeof(unaddr.sun_path) - 1);
+    if (connect(unix_sock,  (struct sockaddr*)&unaddr, sizeof(unaddr)) < 0) {
+        perror("connect");
+        close(unix_sock);
+        return false;
+    }
+    // イメージファイルを開く
     FILE *fp;
     const char *file = "socket_fd.img";
     fp = open_image(file, "rb");
@@ -880,108 +857,113 @@ bool fd_table_restore(struct fd_table *ft) {
         printf("failed to open %s\n", file);
         return false;
     }
-
-    struct {
-        __wasi_fd_t wasi_fd;
-        int src;
-    } entries[32];
-    int entry_count = 0;
-
-    while (1) {
-        __wasi_fd_t wasi_fd;
-        int real_fd;
-        int src;
-
-        size_t n1 = fread(&wasi_fd, sizeof(wasi_fd), 1, fp);
-        size_t n2 = fread(&real_fd, sizeof(real_fd), 1, fp);
-        size_t n3 = fread(&src, sizeof(src), 1, fp);
-
-        if (n1 != 1 || n2 != 1 || n3 != 1) {
-            if (feof(fp)) break;
+    //エントリ読み込み用
+    struct FdEntry entry;
+    // 仮想FD、id、FDの作成操作の組を一周としてループ
+    while (true) {
+        // 1エントリ読み出す
+        size_t r1 = fread(&entry.wasi_fd, sizeof(entry.wasi_fd), 1, fp);
+        size_t r2 = fread(&entry.id, sizeof(entry.id), 1, fp);
+        size_t r3 = fread(&entry.op, sizeof(entry.op), 1, fp);
+        // 終端まで読んだorエラーで抜ける
+        if (r1 != 1 || r2 != 1 || r3 != 1) {
+            if (feof(fp)) {
+                break;
+            }
             perror("fread");
+            close(unix_sock);
             fclose(fp);
             return false;
         }
-
-        if (src == 1 || src == 2) {
-            entries[entry_count].wasi_fd = wasi_fd;
-            entries[entry_count].src = src;
-            entry_count++;
+        // sock_openとsock_acceptで作ったfdに対応
+        if (entry.op == FD_OP_OPEN || entry.op ==FD_OP_ACCEPT) {
+            // idをもとにブローカーに要求するmsg作成
+            struct Payload s_data;
+            // パディングの無効値を防ぐため0埋め
+            memset(&s_data, 0, sizeof(s_data));
+            s_data.cmd = 'R';
+            s_data.id = entry.id;
+            struct iovec s_io;
+            s_io.iov_base = &s_data;
+            s_io.iov_len = sizeof(s_data);            
+            struct msghdr s_msg;
+            memset(&s_msg, 0, sizeof(s_msg));
+            s_msg.msg_iov = &s_io;
+            s_msg.msg_iovlen = 1;
+            // sendmsgで送信
+            if (sendmsg(unix_sock, &s_msg, 0) < 0) {
+                perror("request sendmsg");
+                close(unix_sock);
+                fclose(fp);
+                return false;
+            }
+            // FD込みのメッセージを受け取る空の箱を作る
+            struct Payload r_data;
+            memset(&r_data, 0, sizeof(r_data));
+            struct iovec r_io;
+            r_io.iov_base = &r_data;
+            r_io.iov_len = sizeof(r_data);
+            struct msghdr r_msg;
+            memset(&r_msg, 0, sizeof(r_msg));
+            r_msg.msg_iov = &r_io;
+            r_msg.msg_iovlen = 1;
+            FdCmsgBuf cbuf;
+            memset(&cbuf, 0, sizeof(cbuf));
+            r_msg.msg_control = cbuf.buf;
+            r_msg.msg_controllen = sizeof(cbuf.buf);
+            // recvmsgで受け取り
+            ssize_t n = recvmsg(unix_sock, &r_msg, 0);
+            if (n != sizeof(struct Payload)) {
+                perror("recvmsg");
+                close(unix_sock);
+                fclose(fp);
+                return false;
+            }
+            // メッセージにFDが含まれているか確認
+            struct cmsghdr* cmsg = CMSG_FIRSTHDR(&r_msg);
+            if (!cmsg || cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS) {
+                fprintf(stderr, "Invalid control message\n");
+                close(unix_sock);
+                fclose(fp);
+                return false;
+            }
+            if (r_msg.msg_flags & MSG_CTRUNC) {
+                fprintf(stderr, "Control message truncated\n");
+                close(unix_sock);
+                fclose(fp);
+                return false;
+            }
+            // メッセージに含まれるFDを取り出す
+            int received_fd;
+            memcpy(&received_fd, CMSG_DATA(cmsg), sizeof(received_fd));
+            // 既存の関数でFDテーブルに再挿入
+            // 再度チェックポイントが可能なように操作も覚えさせる
+            if(!fd_table_insert_existing(ft, entry.wasi_fd, received_fd, false, entry.op)) {
+                fprintf(stderr, "failed to insert fd\n");
+                close(received_fd);
+                close(unix_sock);
+                fclose(fp);
+            }
         }
     }
+    // 受信終了制御
+    struct Payload e_data;
+    memset(&e_data, 0, sizeof(e_data));
+    e_data.cmd = 'E';
+    struct iovec e_io;
+    e_io.iov_base = &e_data;
+    e_io.iov_len = sizeof(e_data);
+    struct msghdr e_msg;
+    memset(&e_msg, 0, sizeof(e_msg));
+    e_msg.msg_iov = &e_io;
+    e_msg.msg_iovlen = 1;
+    if (sendmsg(unix_sock, &e_msg, 0) < 0){
+        perror("sendmsg");
+        close(unix_sock);
+        fclose(fp);
+    }
+    close(unix_sock);
     fclose(fp);
-
-    //listen (src==1) → accept (src==2) の順でFDを受け取る
-    for (int i = 0; i < entry_count; i++) {
-        if (entries[i].src != 1 && entries[i].src != 2) continue;
-
-        int recv_sock = socket(AF_UNIX, SOCK_STREAM, 0);
-        if (recv_sock < 0) {
-            perror("socket");
-            return false;
-        }
-
-        struct sockaddr_un addr;
-        memset(&addr, 0, sizeof(addr));
-        addr.sun_family = AF_UNIX;
-        strncpy(addr.sun_path, "/tmp/runtime.sock", sizeof(addr.sun_path) - 1);
-
-        if (connect(recv_sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-            perror("connect");
-            close(recv_sock);
-            return false;
-        }
-
-        const char *req = "GETFD";
-        if (write(recv_sock, req, strlen(req)) < 0) {
-            perror("write");
-            close(recv_sock);
-            return false;
-        }
-
-        struct msghdr msg;
-        struct iovec io;
-        char buf[1];
-        char control[CMSG_SPACE(sizeof(int))];
-
-        memset(&msg, 0, sizeof(msg));
-        memset(control, 0, sizeof(control));
-
-        io.iov_base = buf;
-        io.iov_len = sizeof(buf);
-        msg.msg_iov = &io;
-        msg.msg_iovlen = 1;
-        msg.msg_control = control;
-        msg.msg_controllen = sizeof(control);
-
-        if (recvmsg(recv_sock, &msg, 0) < 0) {
-            perror("recvmsg");
-            close(recv_sock);
-            return false;
-        }
-
-        struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
-        if (!cmsg || cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS) {
-            fprintf(stderr, "Invalid control message\n");
-            close(recv_sock);
-            return false;
-        }
-
-        int received_fd;
-        memcpy(&received_fd, CMSG_DATA(cmsg), sizeof(received_fd));
-
-        /*printf("[fd_table_restore] received %s FD=%d, wasi_fd=%u\n",
-               (entries[i].src == 1) ? "listen" : "accept",
-               received_fd, entries[i].wasi_fd);*/
-
-        if (!fd_table_insert_existing(ft, entries[i].wasi_fd, received_fd, false, FD_OP_NONE)) {
-            fprintf(stderr, "failed to insert fd (src=%d)\n", entries[i].src);
-        }
-        fd_cache_insert(entries[i].wasi_fd, received_fd, entries[i].src);
-
-        close(recv_sock);
-    }
-
     return true;
 }
 
