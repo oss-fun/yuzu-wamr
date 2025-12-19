@@ -445,9 +445,6 @@ fd_table_init(struct fd_table *ft)
     ft->entries = NULL;
     ft->size = 0;
     ft->used = 0;
-    rwlock_wrlock(&ft->lock);
-    fd_table_grow(ft, 0, 64);
-    rwlock_unlock(&ft->lock);
     return true;
 }
 
@@ -809,6 +806,63 @@ fd_table_insert_fd_preserve(wasm_exec_env_t exec_env, struct fd_table *ft,
     }
     return fd_table_insert_preserve(exec_env, ft, fo, rights_base, rights_inheriting,
                            out, op);
+}
+
+// 制御コマンドと一意IDを持つペイロード
+struct Payload {
+    // cmd 送信：'S', 要求：'R', 終了：'E'
+    uint8_t cmd;
+    // IPCのため8byteアライメントを保証する7byteパディング
+    uint8_t pad[7];
+    uint64_t id;
+};
+
+// msg_controlに入れるバッファ
+typedef union {
+    char buf[CMSG_SPACE(sizeof(int))];
+    struct cmsghdr align;
+} FdCmsgBuf;
+
+// FD要求、終了制御のためのmsg作成
+static void setUpMsg(
+    struct msghdr *msg,
+    struct iovec *io,
+    struct Payload *p
+) {
+    // iovecにペイロードを詰める
+    io->iov_base = p;
+    io->iov_len = sizeof(*p);
+    // msgにペイロードを詰めたiovecを渡す
+    msg->msg_iov = io;
+    msg->msg_iovlen = 1;
+    msg->msg_control = NULL;
+    msg->msg_controllen = 0;
+}
+
+// FDを渡すときのcmsg作成
+static bool setUpCmsg(
+    struct msghdr *msg,
+    struct iovec *io,
+    struct Payload *p,
+    int fd,
+    FdCmsgBuf *cbuf
+) {
+    // iovecまで詰めたmsgを作る
+    setUpMsg(msg, io, p);
+    // msgのcontrol部分に補助データを詰める
+    memset(cbuf, 0, sizeof(*cbuf));
+    msg->msg_control = cbuf->buf;
+    msg->msg_controllen = sizeof(cbuf->buf);
+    // FD送信用のcmsgを作成
+    struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
+    if (!cmsg) {
+      return false;
+    }
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(fd));
+    memcpy(CMSG_DATA(cmsg), &fd, sizeof(fd));
+    return true;
 }
 
 bool fd_table_restore(struct fd_table *ft) {

@@ -617,6 +617,7 @@ int wasm_dump_socket(WASMExecEnv exec_env){
             fwrite(&op, sizeof(op), 1, fp);
             // 送信用ペイロード作成
             struct Payload data;
+            // パディングの無効値を防ぐため0埋め
             memset(&data, 0, sizeof(data));
             data.cmd = 'S';
             data.id = id;
