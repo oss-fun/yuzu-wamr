@@ -1078,7 +1078,7 @@ static wasi_errno_t
 wasi_poll_oneoff(wasm_exec_env_t exec_env, const wasi_subscription_t *in,
                  wasi_event_t *out, uint32 nsubscriptions, uint32 *nevents_app)
 {
-    printf("run wasi_poll_oneoff\n");
+    //printf("run wasi_poll_oneoff\n");
     wasm_module_inst_t module_inst = get_module_inst(exec_env);
     wasi_ctx_t wasi_ctx = get_wasi_ctx(module_inst);
     struct fd_table *curfds = wasi_ctx_get_curfds(wasi_ctx);

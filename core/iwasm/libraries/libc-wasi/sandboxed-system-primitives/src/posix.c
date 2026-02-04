@@ -1019,7 +1019,8 @@ wasmtime_ssp_fd_prestat_dir_name(struct fd_prestats *prestats, __wasi_fd_t fd,
 __wasi_errno_t
 wasmtime_ssp_fd_close(wasm_exec_env_t exec_env, struct fd_table *curfds,
                       struct fd_prestats *prestats, __wasi_fd_t fd)
-{   printf("fd_close called wasi:%d\n", fd);
+{   
+    //printf("fd_close called wasi:%d\n", fd);
     // Validate the file descriptor.
     struct fd_table *ft = curfds;
     rwlock_wrlock(&ft->lock);
@@ -2638,7 +2639,7 @@ wasi_ssp_sock_accept(wasm_exec_env_t exec_env, struct fd_table *curfds,
         new_sock = os_get_invalid_handle();
         goto fail;
     }
-    printf("sock_accept called wasi:%d\n", *fd_new);
+    //printf("sock_accept called wasi:%d\n", *fd_new);
 
     return __WASI_ESUCCESS;
 
